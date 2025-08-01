@@ -1,6 +1,7 @@
 import "https://deno.land/x/xhr@0.1.0/mod.ts";
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
+import { extractText } from 'https://esm.sh/unpdf@1.1.0';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -11,6 +12,16 @@ const corsHeaders = {
 const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
 const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
 const supabase = createClient(supabaseUrl, supabaseKey);
+
+interface Chapter {
+  title: string;
+  content: string;
+  wordCount: number;
+  startIndex: number;
+  endIndex: number;
+  detectionMethod: string;
+  confidence: number;
+}
 
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
@@ -52,50 +63,35 @@ serve(async (req) => {
       throw new Error('Failed to download PDF file');
     }
 
-    // Convert file to base64 for PDF processing (safely handle large files)
-    const arrayBuffer = await fileData.arrayBuffer();
-    const uint8Array = new Uint8Array(arrayBuffer);
-    
-    // Convert to base64 without spreading the array (prevents stack overflow)
-    let base64Data = '';
-    const chunkSize = 8192;
-    for (let i = 0; i < uint8Array.length; i += chunkSize) {
-      const chunk = uint8Array.slice(i, i + chunkSize);
-      base64Data += btoa(String.fromCharCode.apply(null, Array.from(chunk)));
-    }
-    
-    console.log(`PDF file size: ${arrayBuffer.byteLength} bytes`);
+    console.log(`PDF file size: ${fileData.size} bytes`);
 
-    // Simulate PDF text extraction (in production, use a proper PDF parser)
-    const extractedText = await extractTextFromPDF(base64Data);
+    // Extract text from PDF using unpdf
+    const extractedText = await extractTextFromPDF(fileData);
+    console.log(`Extracted text length: ${extractedText.length} characters`);
     
-    // Split text into chapters using AI
-    const chapters = await splitIntoChapters(extractedText, book.title);
+    // Detect chapters using semantic analysis
+    const chapters = await detectChapters(extractedText, book.title);
+    console.log(`Detected ${chapters.length} chapters`);
     
-    // Generate summaries for each chapter
-    const processedChapters = await Promise.all(
-      chapters.map(async (chapter, index) => {
-        const summary = await generateSummary(chapter.content, book.genre);
-        const highlights = await extractHighlights(chapter.content);
-        
-        return {
-          book_id: bookId,
-          chapter_number: index + 1,
-          part_number: 1,
-          title: chapter.title,
-          content: chapter.content,
-          summary: summary,
-          word_count: chapter.wordCount,
-          reading_time_minutes: Math.ceil(chapter.wordCount / 200), // 200 words per minute
-          highlight_quotes: highlights,
-          metadata: {
-            genre: book.genre,
-            extraction_method: 'ai_split',
-            processed_at: new Date().toISOString()
-          }
-        };
-      })
-    );
+    // Process chapters for database storage
+    const processedChapters = chapters.map((chapter, index) => ({
+      book_id: bookId,
+      chapter_number: index + 1,
+      part_number: 1,
+      title: chapter.title,
+      content: chapter.content,
+      summary: null, // Will be generated later
+      word_count: chapter.wordCount,
+      reading_time_minutes: Math.ceil(chapter.wordCount / 200), // 200 words per minute
+      highlight_quotes: [], // Will be extracted later
+      metadata: {
+        extraction_method: chapter.detectionMethod,
+        detection_confidence: chapter.confidence,
+        start_index: chapter.startIndex,
+        end_index: chapter.endIndex,
+        extracted_at: new Date().toISOString()
+      }
+    }));
 
     // Save chapters to database
     const { error: chaptersError } = await supabase
@@ -127,7 +123,8 @@ serve(async (req) => {
         success: true,
         chapters: processedChapters.length,
         totalWordCount,
-        totalReadingTime
+        totalReadingTime,
+        extractionMethod: 'unpdf_semantic'
       }),
       {
         headers: { ...corsHeaders, 'Content-Type': 'application/json' },
@@ -136,6 +133,19 @@ serve(async (req) => {
 
   } catch (error) {
     console.error('Error processing PDF:', error);
+    
+    // Update book status to failed if we have the bookId
+    try {
+      const { bookId } = await req.json();
+      if (bookId) {
+        await supabase
+          .from('books')
+          .update({ processing_status: 'failed' })
+          .eq('id', bookId);
+      }
+    } catch {
+      // Ignore errors in error handling
+    }
     
     return new Response(
       JSON.stringify({ error: error.message }),
@@ -147,166 +157,194 @@ serve(async (req) => {
   }
 });
 
-async function extractTextFromPDF(base64Data: string): Promise<string> {
-  // Simulated PDF text extraction - in production, integrate with a PDF parsing service
-  // For now, return sample text that simulates a book
-  return `Chapter 1: The Beginning
-
-This is the opening chapter of our story, where we meet the main characters and establish the setting. The narrative begins in a small coastal town where mysteries unfold and adventures await.
-
-Our protagonist, Sarah, discovers an old letter hidden in the attic of her grandmother's house. The letter speaks of treasures and secrets that have been kept for generations.
-
-Chapter 2: The Discovery
-
-Sarah decides to investigate the clues mentioned in the letter. She embarks on a journey that will change her life forever. The path leads her through ancient forests and forgotten ruins.
-
-Along the way, she meets Thomas, a local historian who becomes her guide and companion. Together, they uncover the first piece of the puzzle that will lead them to an extraordinary discovery.
-
-Chapter 3: The Quest
-
-The adventure intensifies as Sarah and Thomas follow the trail of clues. They encounter challenges that test not only their resolve but also their growing friendship.
-
-Each revelation brings them closer to the truth, but also deeper into danger. The stakes rise as they realize they're not the only ones searching for the treasure.
-
-Chapter 4: The Revelation
-
-In this climactic chapter, all the mysteries are revealed. Sarah discovers her true heritage and the reason why the treasure was hidden in the first place.
-
-The final confrontation brings resolution to the story, but also opens new possibilities for future adventures. The characters have grown and changed through their journey.`;
+async function extractTextFromPDF(fileData: Blob): Promise<string> {
+  try {
+    console.log('Starting PDF text extraction with unpdf...');
+    
+    // Convert blob to ArrayBuffer for unpdf
+    const arrayBuffer = await fileData.arrayBuffer();
+    const uint8Array = new Uint8Array(arrayBuffer);
+    
+    // Extract text using unpdf
+    const { text } = await extractText(uint8Array, {
+      mergePages: true, // Combine all pages into single text
+      disableCombineTextItems: false, // Allow text combining for better readability
+    });
+    
+    if (!text || text.trim().length === 0) {
+      throw new Error('No text could be extracted from PDF');
+    }
+    
+    console.log(`Successfully extracted ${text.length} characters from PDF`);
+    return text;
+    
+  } catch (error) {
+    console.error('PDF extraction failed:', error);
+    throw new Error(`Failed to extract text from PDF: ${error.message}`);
+  }
 }
 
-async function splitIntoChapters(text: string, bookTitle: string): Promise<Array<{title: string, content: string, wordCount: number}>> {
-  const openAIApiKey = Deno.env.get('OPENAI_API_KEY');
+async function detectChapters(text: string, bookTitle: string): Promise<Chapter[]> {
+  console.log('Starting chapter detection...');
   
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${openAIApiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: `You are an expert book editor. Analyze the provided text and split it into logical chapters. Each chapter should be 1000-2000 words. If a chapter is longer, split it into parts. Return a JSON array where each object has: title, content, wordCount. Ensure chapters flow naturally and maintain narrative cohesion.`
-        },
-        {
-          role: 'user',
-          content: `Split this text from "${bookTitle}" into chapters:\n\n${text}`
-        }
-      ],
-      temperature: 0.3,
-    }),
-  });
-
-  const data = await response.json();
+  // Clean up the text first
+  const cleanedText = cleanupText(text);
   
-  if (!response.ok) {
-    throw new Error(`OpenAI API error: ${data.error?.message || 'Unknown error'}`);
+  // Try different detection methods in order of preference
+  let chapters = detectChaptersByPatterns(cleanedText);
+  
+  if (chapters.length === 0) {
+    console.log('Pattern detection failed, trying page break method...');
+    chapters = detectChaptersByPageBreaks(cleanedText);
   }
+  
+  if (chapters.length === 0) {
+    console.log('All detection methods failed, creating single chapter...');
+    chapters = [{
+      title: bookTitle || 'Full Book',
+      content: cleanedText,
+      wordCount: cleanedText.split(/\s+/).length,
+      startIndex: 0,
+      endIndex: cleanedText.length,
+      detectionMethod: 'fallback_single',
+      confidence: 0.1
+    }];
+  }
+  
+  console.log(`Chapter detection complete: ${chapters.length} chapters found`);
+  return chapters;
+}
 
-  try {
-    const chapters = JSON.parse(data.choices[0].message.content);
-    return Array.isArray(chapters) ? chapters : [];
-  } catch {
-    // Fallback: simple chapter splitting
-    const paragraphs = text.split('\n\n').filter(p => p.trim());
-    const chapters = [];
-    let currentChapter = { title: 'Chapter 1', content: '', wordCount: 0 };
-    let chapterNum = 1;
+function cleanupText(text: string): string {
+  // Remove headers, footers, and page numbers
+  return text
+    .replace(/^\s*\d+\s*$/gm, '') // Remove standalone page numbers
+    .replace(/^.*Page \d+ of \d+.*$/gim, '') // Remove "Page X of Y" headers
+    .replace(/^\s*Chapter \d+\s*Page \d+\s*$/gim, '') // Remove "Chapter X Page Y"
+    .replace(/\f/g, '\n\n') // Replace form feeds with double newlines
+    .replace(/\n{3,}/g, '\n\n') // Replace multiple newlines with double newlines
+    .replace(/^\s+|\s+$/g, '') // Trim whitespace
+    .replace(/[ \t]+/g, ' '); // Normalize spaces
+}
+
+function detectChaptersByPatterns(text: string): Chapter[] {
+  const chapters: Chapter[] = [];
+  const lines = text.split('\n');
+  
+  // Patterns for chapter detection (in order of preference)
+  const chapterPatterns = [
+    /^(Chapter\s+)(\d+|[IVXLCDM]+|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|Eleven|Twelve|Thirteen|Fourteen|Fifteen|Sixteen|Seventeen|Eighteen|Nineteen|Twenty)\s*:?\s*(.*)$/i,
+    /^(Ch\.?\s+)(\d+|[IVXLCDM]+)\s*:?\s*(.*)$/i,
+    /^(\d+|[IVXLCDM]+)\.\s+(.+)$/,
+    /^(Part\s+)(\d+|[IVXLCDM]+|One|Two|Three|Four|Five)\s*:?\s*(.*)$/i,
+    /^(Section\s+)(\d+|[IVXLCDM]+)\s*:?\s*(.*)$/i
+  ];
+  
+  let currentChapter: Partial<Chapter> = {};
+  let currentContent: string[] = [];
+  let chapterCount = 0;
+  
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    let isChapterStart = false;
+    let chapterTitle = '';
+    let confidence = 0;
     
-    for (const paragraph of paragraphs) {
-      if (paragraph.toLowerCase().includes('chapter') && currentChapter.content) {
-        currentChapter.wordCount = currentChapter.content.split(' ').length;
-        chapters.push(currentChapter);
-        chapterNum++;
-        currentChapter = { title: `Chapter ${chapterNum}`, content: paragraph, wordCount: 0 };
-      } else {
-        currentChapter.content += (currentChapter.content ? '\n\n' : '') + paragraph;
+    // Check against all patterns
+    for (const pattern of chapterPatterns) {
+      const match = line.match(pattern);
+      if (match) {
+        isChapterStart = true;
+        confidence = chapterPatterns.indexOf(pattern) === 0 ? 0.9 : 0.7;
+        
+        // Construct chapter title
+        if (match[3]) {
+          chapterTitle = `${match[1]}${match[2]}: ${match[3]}`.trim();
+        } else if (match[2]) {
+          chapterTitle = `${match[1]}${match[2]}`.trim();
+        } else {
+          chapterTitle = line;
+        }
+        break;
       }
     }
     
-    if (currentChapter.content) {
-      currentChapter.wordCount = currentChapter.content.split(' ').length;
-      chapters.push(currentChapter);
+    // If we found a chapter start and we have previous content, save the previous chapter
+    if (isChapterStart && currentContent.length > 0) {
+      const content = currentContent.join('\n').trim();
+      if (content.length > 100) { // Only save chapters with substantial content
+        chapters.push({
+          title: currentChapter.title || `Chapter ${chapterCount + 1}`,
+          content: content,
+          wordCount: content.split(/\s+/).length,
+          startIndex: currentChapter.startIndex || 0,
+          endIndex: text.indexOf(content) + content.length,
+          detectionMethod: 'pattern_matching',
+          confidence: currentChapter.confidence || 0.5
+        });
+        chapterCount++;
+      }
+      currentContent = [];
     }
     
-    return chapters;
+    // Start new chapter
+    if (isChapterStart) {
+      currentChapter = {
+        title: chapterTitle,
+        startIndex: text.indexOf(line),
+        confidence: confidence
+      };
+    } else if (line.length > 0) {
+      currentContent.push(line);
+    }
   }
+  
+  // Save the last chapter
+  if (currentContent.length > 0) {
+    const content = currentContent.join('\n').trim();
+    if (content.length > 100) {
+      chapters.push({
+        title: currentChapter.title || `Chapter ${chapterCount + 1}`,
+        content: content,
+        wordCount: content.split(/\s+/).length,
+        startIndex: currentChapter.startIndex || 0,
+        endIndex: text.length,
+        detectionMethod: 'pattern_matching',
+        confidence: currentChapter.confidence || 0.5
+      });
+    }
+  }
+  
+  console.log(`Pattern detection found ${chapters.length} chapters`);
+  return chapters;
 }
 
-async function generateSummary(content: string, genre?: string): Promise<string> {
-  const openAIApiKey = Deno.env.get('OPENAI_API_KEY');
+function detectChaptersByPageBreaks(text: string): Chapter[] {
+  const chapters: Chapter[] = [];
   
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${openAIApiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: `Create a concise 100-200 word summary that captures the key events, character development, and narrative progression. ${genre ? `Adapt your tone for ${genre} genre.` : ''} Focus on plot advancement and emotional beats.`
-        },
-        {
-          role: 'user',
-          content: `Summarize this chapter:\n\n${content}`
-        }
-      ],
-      temperature: 0.5,
-      max_tokens: 300,
-    }),
-  });
-
-  const data = await response.json();
+  // Split by potential chapter breaks (multiple newlines + potential page markers)
+  const sections = text.split(/\n\s*\n\s*\n/);
   
-  if (!response.ok) {
-    throw new Error(`Summary generation failed: ${data.error?.message || 'Unknown error'}`);
+  if (sections.length > 1) {
+    sections.forEach((section, index) => {
+      const trimmedSection = section.trim();
+      if (trimmedSection.length > 500) { // Only consider substantial sections
+        const firstLine = trimmedSection.split('\n')[0].trim();
+        const title = firstLine.length < 100 ? firstLine : `Chapter ${index + 1}`;
+        
+        chapters.push({
+          title: title,
+          content: trimmedSection,
+          wordCount: trimmedSection.split(/\s+/).length,
+          startIndex: text.indexOf(trimmedSection),
+          endIndex: text.indexOf(trimmedSection) + trimmedSection.length,
+          detectionMethod: 'page_breaks',
+          confidence: 0.6
+        });
+      }
+    });
   }
-
-  return data.choices[0].message.content.trim();
-}
-
-async function extractHighlights(content: string): Promise<string[]> {
-  const openAIApiKey = Deno.env.get('OPENAI_API_KEY');
   
-  const response = await fetch('https://api.openai.com/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${openAIApiKey}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: 'Extract 2-4 meaningful, memorable quotes or passages that capture the essence of this chapter. Return as a JSON array of strings. Focus on impactful dialogue, beautiful descriptions, or key plot moments.'
-        },
-        {
-          role: 'user',
-          content: `Extract highlights from:\n\n${content}`
-        }
-      ],
-      temperature: 0.3,
-      max_tokens: 400,
-    }),
-  });
-
-  const data = await response.json();
-  
-  if (!response.ok) {
-    return []; // Return empty array if highlights extraction fails
-  }
-
-  try {
-    const highlights = JSON.parse(data.choices[0].message.content);
-    return Array.isArray(highlights) ? highlights : [];
-  } catch {
-    return [];
-  }
+  console.log(`Page break detection found ${chapters.length} chapters`);
+  return chapters;
 }
