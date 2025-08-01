@@ -288,61 +288,85 @@ function cleanupText(text: string): string {
 }
 
 function detectChaptersByContentAnalysis(text: string, bookTitle: string): Chapter[] {
+  console.log('Starting content-based chapter splitting...');
   const chapters: Chapter[] = [];
-  const targetWordsPerChapter = 3000; // Target 3000 words per chapter for better readability
+  const targetWordsPerChapter = 3000; // Target 3000 words per chapter
   const minWordsPerChapter = 1500;    // Minimum words per chapter
-  const maxWordsPerChapter = 8000;    // Maximum words per chapter
   
-  // Split text into paragraphs for better boundary detection
-  const paragraphs = text.split(/\n\s*\n/).filter(p => p.trim().length > 0);
+  // Split text into sentences for better boundary detection
+  const sentences = text.split(/[.!?]+/).filter(s => s.trim().length > 20);
+  console.log(`Found ${sentences.length} sentences for chapter splitting`);
   
   let currentChapter = '';
   let currentWordCount = 0;
   let chapterNumber = 1;
   
-  for (let i = 0; i < paragraphs.length; i++) {
-    const paragraph = paragraphs[i].trim();
-    const paragraphWordCount = paragraph.split(/\s+/).length;
+  for (let i = 0; i < sentences.length; i++) {
+    const sentence = sentences[i].trim() + '.';
+    const sentenceWordCount = sentence.split(/\s+/).length;
     
-    currentChapter += paragraph + '\n\n';
-    currentWordCount += paragraphWordCount;
+    currentChapter += sentence + ' ';
+    currentWordCount += sentenceWordCount;
     
     // Check if we should end this chapter
     const shouldEndChapter = 
       currentWordCount >= targetWordsPerChapter ||
-      (currentWordCount >= minWordsPerChapter && currentWordCount + paragraphWordCount > maxWordsPerChapter) ||
-      i === paragraphs.length - 1;
+      i === sentences.length - 1;
     
     if (shouldEndChapter && currentWordCount >= minWordsPerChapter) {
-      // Try to find a meaningful title from the first line
-      const firstLine = currentChapter.split('\n')[0].trim();
-      const title = (firstLine.length > 0 && firstLine.length < 100) 
-        ? firstLine 
+      // Create chapter title from first sentence or use generic title
+      const firstSentence = currentChapter.split('.')[0].trim();
+      const title = (firstSentence.length > 0 && firstSentence.length < 80) 
+        ? `${bookTitle} - ${firstSentence}...`
         : `${bookTitle} - Chapter ${chapterNumber}`;
       
       chapters.push({
         title: title,
         content: currentChapter.trim(),
         wordCount: currentWordCount,
-        startIndex: text.indexOf(currentChapter.substring(0, 100)),
-        endIndex: text.indexOf(currentChapter.substring(0, 100)) + currentChapter.length,
-        detectionMethod: 'content_analysis',
+        startIndex: 0, // Will be calculated properly later
+        endIndex: currentChapter.length,
+        detectionMethod: 'content_analysis_sentences',
         confidence: 0.7
       });
       
+      console.log(`Created chapter ${chapterNumber}: ${currentWordCount} words`);
       chapterNumber++;
       currentChapter = '';
       currentWordCount = 0;
     }
   }
   
+  // Handle remaining content
+  if (currentChapter.trim().length > 0 && currentWordCount >= 500) {
+    const firstSentence = currentChapter.split('.')[0].trim();
+    const title = (firstSentence.length > 0 && firstSentence.length < 80) 
+      ? `${bookTitle} - ${firstSentence}...`
+      : `${bookTitle} - Chapter ${chapterNumber}`;
+      
+    chapters.push({
+      title: title,
+      content: currentChapter.trim(),
+      wordCount: currentWordCount,
+      startIndex: 0,
+      endIndex: currentChapter.length,
+      detectionMethod: 'content_analysis_sentences',
+      confidence: 0.7
+    });
+    console.log(`Created final chapter ${chapterNumber}: ${currentWordCount} words`);
+  }
+  
+  console.log(`Content analysis complete: created ${chapters.length} chapters`);
   return chapters;
 }
 
 function createOptimizedChunks(text: string, bookTitle: string): Chapter[] {
+  console.log('Creating optimized chunks as fallback...');
   const chapters: Chapter[] = [];
-  const wordsPerChunk = 4000; // Optimal chunk size for reading
+  const wordsPerChunk = 2500; // Smaller, more digestible chunks
   const words = text.split(/\s+/);
+  
+  console.log(`Splitting ${words.length} total words into chunks of ${wordsPerChunk} words each`);
   
   for (let i = 0; i < words.length; i += wordsPerChunk) {
     const chunkWords = words.slice(i, i + wordsPerChunk);
@@ -350,8 +374,10 @@ function createOptimizedChunks(text: string, bookTitle: string): Chapter[] {
     
     if (content.trim().length > 100) {
       const chapterNumber = Math.floor(i / wordsPerChunk) + 1;
+      const title = `${bookTitle} - Part ${chapterNumber}`;
+      
       chapters.push({
-        title: `${bookTitle} - Part ${chapterNumber}`,
+        title: title,
         content: content,
         wordCount: chunkWords.length,
         startIndex: i,
@@ -359,8 +385,11 @@ function createOptimizedChunks(text: string, bookTitle: string): Chapter[] {
         detectionMethod: 'optimized_chunking',
         confidence: 0.5
       });
+      
+      console.log(`Created chunk ${chapterNumber}: ${chunkWords.length} words`);
     }
   }
   
+  console.log(`Optimized chunking complete: created ${chapters.length} chapters`);
   return chapters;
 }
