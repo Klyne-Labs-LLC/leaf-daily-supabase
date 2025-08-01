@@ -8,35 +8,57 @@ All colors MUST be HSL.
 
 @layer base {
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
+    --background: 16 20% 98%;
+    --foreground: 16 70% 9%;
 
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
+    --card-foreground: 16 70% 9%;
 
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
+    --popover-foreground: 16 70% 9%;
 
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
+    --primary: 22 93% 56%;
+    --primary-foreground: 0 0% 100%;
+    --primary-glow: 22 100% 70%;
 
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
+    --secondary: 22 47% 96%;
+    --secondary-foreground: 16 70% 15%;
 
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
+    --muted: 22 30% 95%;
+    --muted-foreground: 16 30% 50%;
 
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
+    --accent: 22 93% 56%;
+    --accent-foreground: 0 0% 100%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --destructive: 0 84% 60%;
+    --destructive-foreground: 0 0% 100%;
 
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
+    --border: 22 20% 89%;
+    --input: 22 20% 89%;
+    --ring: 22 93% 56%;
 
-    --radius: 0.5rem;
+    --radius: 0.75rem;
+
+    /* Reading app specific colors */
+    --reader-bg: 22 15% 97%;
+    --reader-text: 16 70% 12%;
+    --chapter-highlight: 22 93% 95%;
+    --progress-bg: 22 30% 92%;
+    --book-spine: 22 93% 48%;
+
+    /* Gradients */
+    --gradient-primary: linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary-glow)));
+    --gradient-card: linear-gradient(145deg, hsl(var(--background)), hsl(var(--muted)));
+    --gradient-reader: linear-gradient(180deg, hsl(var(--reader-bg)), hsl(var(--background)));
+
+    /* Shadows */
+    --shadow-book: 0 10px 30px -5px hsl(var(--primary) / 0.2);
+    --shadow-card: 0 4px 20px -2px hsl(var(--primary) / 0.1);
+    --shadow-reader: inset 0 1px 0 hsl(var(--muted));
+
+    /* Animations */
+    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+    --transition-bounce: all 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
 
     --sidebar-background: 0 0% 98%;
 

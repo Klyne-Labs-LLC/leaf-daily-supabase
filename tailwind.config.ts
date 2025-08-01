@@ -26,7 +26,8 @@ export default {
 				foreground: 'hsl(var(--foreground))',
 				primary: {
 					DEFAULT: 'hsl(var(--primary))',
-					foreground: 'hsl(var(--primary-foreground))'
+					foreground: 'hsl(var(--primary-foreground))',
+					glow: 'hsl(var(--primary-glow))'
 				},
 				secondary: {
 					DEFAULT: 'hsl(var(--secondary))',
@@ -52,6 +53,19 @@ export default {
 					DEFAULT: 'hsl(var(--card))',
 					foreground: 'hsl(var(--card-foreground))'
 				},
+				reader: {
+					bg: 'hsl(var(--reader-bg))',
+					text: 'hsl(var(--reader-text))'
+				},
+				chapter: {
+					highlight: 'hsl(var(--chapter-highlight))'
+				},
+				progress: {
+					bg: 'hsl(var(--progress-bg))'
+				},
+				book: {
+					spine: 'hsl(var(--book-spine))'
+				},
 				sidebar: {
 					DEFAULT: 'hsl(var(--sidebar-background))',
 					foreground: 'hsl(var(--sidebar-foreground))',
@@ -62,6 +76,20 @@ export default {
 					border: 'hsl(var(--sidebar-border))',
 					ring: 'hsl(var(--sidebar-ring))'
 				}
+			},
+			backgroundImage: {
+				'gradient-primary': 'var(--gradient-primary)',
+				'gradient-card': 'var(--gradient-card)',
+				'gradient-reader': 'var(--gradient-reader)'
+			},
+			boxShadow: {
+				'book': 'var(--shadow-book)',
+				'card-custom': 'var(--shadow-card)',
+				'reader': 'var(--shadow-reader)'
+			},
+			transitionTimingFunction: {
+				'smooth': 'var(--transition-smooth)',
+				'bounce-custom': 'var(--transition-bounce)'
 			},
 			borderRadius: {
 				lg: 'var(--radius)',
