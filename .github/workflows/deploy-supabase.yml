@@ -64,6 +64,53 @@ jobs:
             exit 1
           fi
 
+      - name: Check Migration Sync
+        if: steps.check_migrations.outputs.migrations_exist == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+          SUPABASE_DB_PASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          echo "Checking if local migrations match remote database..."
+          
+          # Check migration status to detect sync issues
+          migration_status=$(supabase db diff --schema public 2>&1)
+          diff_exit_code=$?
+          
+          # If there are differences, it means remote has migrations not in local repo
+          if [ $diff_exit_code -ne 0 ] && echo "$migration_status" | grep -q "relation.*does not exist\|column.*does not exist\|function.*does not exist"; then
+            echo "🚨 MIGRATION SYNC ERROR DETECTED"
+            echo "==============================================="
+            echo "❌ Your local migrations are out of sync with the remote database."
+            echo ""
+            echo "🔍 ISSUE:"
+            echo "   The remote database contains migrations that are not present in your local repository."
+            echo "   This typically happens when:"
+            echo "   - Migrations were applied directly to the database"
+            echo "   - Another developer's migrations were deployed but not pulled locally"
+            echo "   - Database changes were made through the Supabase Dashboard"
+            echo ""
+            echo "🛠️  HOW TO FIX:"
+            echo "   1. Pull the latest remote migrations to your local repository:"
+            echo "      supabase db pull"
+            echo ""
+            echo "   2. Review the pulled migration files in supabase/migrations/"
+            echo ""
+            echo "   3. Commit and push the pulled migrations:"
+            echo "      git add supabase/migrations/"
+            echo "      git commit -m 'sync: Pull remote database migrations'"
+            echo "      git push"
+            echo ""
+            echo "   4. Re-run this deployment workflow"
+            echo ""
+            echo "📋 MIGRATION STATUS:"
+            echo "$migration_status"
+            echo "==============================================="
+            exit 1
+          else
+            echo "✅ Local migrations appear to be in sync with remote database"
+          fi
+
       - name: Deploy Database Migrations
         if: steps.check_migrations.outputs.migrations_exist == 'true'
         env:
@@ -73,13 +120,19 @@ jobs:
         run: |
           echo "Deploying database migrations..."
           
-          # Deploy migrations after linking project
+          # Deploy migrations after linking project and sync check
           supabase db push --include-all
           
           if [ $? -eq 0 ]; then
             echo "✅ Database migrations deployed successfully"
           else
             echo "❌ Failed to deploy database migrations"
+            echo ""
+            echo "💡 TROUBLESHOOTING TIPS:"
+            echo "   - Check if migrations are properly formatted"
+            echo "   - Verify database credentials and permissions"
+            echo "   - Review migration files for syntax errors"
+            echo "   - Check Supabase project status and quotas"
             exit 1
           fi
 
@@ -129,7 +182,10 @@ jobs:
         if: always()
         run: |
           echo "🚀 Deployment Summary:"
+          echo "- Migrations checked: ${{ steps.check_migrations.outputs.migrations_exist }}"
           echo "- Migrations deployed: ${{ steps.check_migrations.outputs.migrations_exist }}"
           echo "- Edge functions deployed: ${{ steps.check_functions.outputs.functions_exist }}"
           echo "- Project ID: ${{ secrets.SUPABASE_PROJECT_ID }}"
           echo "- Timestamp: $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          echo ""
+          echo "📄 Workflow completed. Check individual step results above for details."

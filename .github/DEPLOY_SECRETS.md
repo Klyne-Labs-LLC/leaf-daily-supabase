@@ -71,3 +71,5 @@ The workflow triggers on changes to:
 - If functions fail, migrations remain applied
 - Detailed error messages and exit codes help with debugging
 - Secrets configuration failures are treated as warnings, not errors
+
+
