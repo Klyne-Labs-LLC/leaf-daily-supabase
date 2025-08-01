@@ -78,33 +78,25 @@ serve(async (req) => {
     const chapters = await detectIntelligentChapters(extractedText, book.title);
     console.log(`Detected ${chapters.length} chapters`);
     
-    // Process chapters with OpenAI enhancement
-    console.log('Processing chapters with OpenAI for better readability...');
-    const processedChapters = await Promise.all(
-      chapters.map(async (chapter, index) => {
-        const enhancedChapter = await enhanceChapterWithAI(chapter, book.title, index + 1);
-        
-        return {
-          book_id: bookId,
-          chapter_number: index + 1,
-          part_number: 1,
-          title: enhancedChapter.title,
-          content: enhancedChapter.content,
-          summary: enhancedChapter.summary,
-          word_count: enhancedChapter.content.split(/\s+/).length,
-          reading_time_minutes: Math.ceil(enhancedChapter.content.split(/\s+/).length / 200),
-          highlight_quotes: enhancedChapter.keyQuotes || [],
-          metadata: {
-            extraction_method: chapter.detectionMethod,
-            detection_confidence: chapter.confidence,
-            start_index: chapter.startIndex,
-            end_index: chapter.endIndex,
-            extracted_at: new Date().toISOString(),
-            ai_enhanced: true
-          }
-        };
-      })
-    );
+    // Process chapters for database storage (without AI enhancement for now to avoid timeouts)
+    const processedChapters = chapters.map((chapter, index) => ({
+      book_id: bookId,
+      chapter_number: index + 1,
+      part_number: 1,
+      title: chapter.title,
+      content: chapter.content,
+      summary: null, // Will be enhanced later via separate process
+      word_count: chapter.wordCount,
+      reading_time_minutes: Math.ceil(chapter.wordCount / 200), // 200 words per minute
+      highlight_quotes: [], // Will be extracted later
+      metadata: {
+        extraction_method: chapter.detectionMethod,
+        detection_confidence: chapter.confidence,
+        start_index: chapter.startIndex,
+        end_index: chapter.endIndex,
+        extracted_at: new Date().toISOString()
+      }
+    }));
 
     // Save chapters to database
     const { error: chaptersError } = await supabase
