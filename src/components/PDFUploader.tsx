@@ -121,9 +121,16 @@ export const PDFUploader = ({ onUploadComplete }: PDFUploaderProps) => {
       setUploading(false);
       setProcessing(true);
 
-      // Trigger PDF processing
-      const { error: processError } = await supabase.functions.invoke('process-pdf', {
-        body: { bookId: book.id }
+      // Trigger PDF processing with new orchestrator
+      const { data: orchestratorResult, error: processError } = await supabase.functions.invoke('process-pdf-orchestrator', {
+        body: { 
+          bookId: book.id,
+          config: {
+            enableCaching: true,
+            enableAsyncEnhancement: true,
+            priorityLevel: 5
+          }
+        }
       });
 
       if (processError) throw processError;

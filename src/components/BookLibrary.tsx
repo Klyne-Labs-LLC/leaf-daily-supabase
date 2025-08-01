@@ -15,6 +15,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
+import { ProcessingProgress } from './ProcessingProgress';
 
 interface Book {
   id: string;
@@ -120,8 +121,15 @@ export const BookLibrary = ({ onSelectBook, onUploadNew }: BookLibraryProps) => 
 
   const retryProcessing = async (bookId: string) => {
     try {
-      const { error } = await supabase.functions.invoke('process-pdf', {
-        body: { bookId }
+      const { error } = await supabase.functions.invoke('process-pdf-orchestrator', {
+        body: { 
+          bookId,
+          config: {
+            enableCaching: true,
+            enableAsyncEnhancement: true,
+            priorityLevel: 5
+          }
+        }
       });
 
       if (error) throw error;
@@ -235,13 +243,10 @@ export const BookLibrary = ({ onSelectBook, onUploadNew }: BookLibraryProps) => 
 
               {/* Processing Status */}
               {book.processing_status === 'processing' && (
-                <div className="space-y-2">
-                  <div className="flex justify-between text-sm">
-                    <span>Processing chapters...</span>
-                    <span>⏳</span>
-                  </div>
-                  <Progress value={65} className="h-2" />
-                </div>
+                <ProcessingProgress 
+                  bookId={book.id} 
+                  onComplete={() => fetchBooks()}
+                />
               )}
 
               {/* Upload Date */}

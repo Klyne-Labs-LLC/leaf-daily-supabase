@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Button } from '@/components/ui/button';
 import { LogOut, User } from 'lucide-react';
-import { PDFUploader } from '@/components/PDFUploader';
+import { PDFUploadWithProgress } from '@/components/PDFUploadWithProgress';
 import { BookLibrary } from '@/components/BookLibrary';
 import { BookReader } from '@/components/BookReader';
 import { useAuth } from '@/hooks/useAuth';
@@ -90,7 +90,10 @@ const Index = () => {
         )}
         
         {currentView === 'upload' && (
-          <PDFUploader onUploadComplete={handleUploadComplete} />
+          <PDFUploadWithProgress 
+            onComplete={handleBackToLibrary}
+            onCancel={handleBackToLibrary}
+          />
         )}
         
         {currentView === 'reader' && selectedBookId && (
