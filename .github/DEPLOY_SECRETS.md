@@ -19,7 +19,13 @@ sbp_58fae10b187ef930a0aafabf6482198b137990d9
 - Value: `umdranpjoplxbgxkhoix`
 - This is your project reference ID
 
-### 3. OPENAI_API_KEY (Optional)
+### 3. SUPABASE_DB_PASSWORD (Required)
+- Your Supabase database password
+- Required for linking the project in CI/CD
+- Keep this secret and never commit it to the repository
+- This is the password you use to access your database
+
+### 4. OPENAI_API_KEY (Optional)
 - Only if you want AI-enhanced chapter processing
 - Get from: https://platform.openai.com/api-keys
 
