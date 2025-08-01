@@ -52,10 +52,18 @@ serve(async (req) => {
       throw new Error('Failed to download PDF file');
     }
 
-    // Convert file to base64 for PDF processing
+    // Convert file to base64 for PDF processing (safely handle large files)
     const arrayBuffer = await fileData.arrayBuffer();
-    const base64Data = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
-
+    const uint8Array = new Uint8Array(arrayBuffer);
+    
+    // Convert to base64 without spreading the array (prevents stack overflow)
+    let base64Data = '';
+    const chunkSize = 8192;
+    for (let i = 0; i < uint8Array.length; i += chunkSize) {
+      const chunk = uint8Array.slice(i, i + chunkSize);
+      base64Data += btoa(String.fromCharCode.apply(null, Array.from(chunk)));
+    }
+    
     console.log(`PDF file size: ${arrayBuffer.byteLength} bytes`);
 
     // Simulate PDF text extraction (in production, use a proper PDF parser)
