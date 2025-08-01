@@ -104,8 +104,13 @@ export const PDFUploader = ({ onUploadComplete }: PDFUploaderProps) => {
 
       setUploadProgress(30);
 
-      // Upload file to storage
-      const filePath = `${user.id}/${file.name}`;
+      // Upload file to storage - sanitize filename for storage
+      const sanitizedFileName = file.name
+        .replace(/[^\w\s.-]/g, '') // Remove special characters except dots, hyphens, and spaces
+        .replace(/\s+/g, '_') // Replace spaces with underscores
+        .replace(/_{2,}/g, '_'); // Replace multiple underscores with single
+      
+      const filePath = `${user.id}/${sanitizedFileName}`;
       const { error: uploadError } = await supabase.storage
         .from('book-pdfs')
         .upload(filePath, file);

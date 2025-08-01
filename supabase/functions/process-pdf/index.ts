@@ -54,10 +54,15 @@ serve(async (req) => {
       throw new Error('Book not found');
     }
 
-    // Download PDF from storage
+    // Download PDF from storage - sanitize filename to match upload
+    const sanitizedFileName = book.file_name
+      .replace(/[^\w\s.-]/g, '') // Remove special characters except dots, hyphens, and spaces
+      .replace(/\s+/g, '_') // Replace spaces with underscores
+      .replace(/_{2,}/g, '_'); // Replace multiple underscores with single
+      
     const { data: fileData, error: downloadError } = await supabase.storage
       .from('book-pdfs')
-      .download(`${book.user_id}/${book.file_name}`);
+      .download(`${book.user_id}/${sanitizedFileName}`);
 
     if (downloadError || !fileData) {
       throw new Error('Failed to download PDF file');
