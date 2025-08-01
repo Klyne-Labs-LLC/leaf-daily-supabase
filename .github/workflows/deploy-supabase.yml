@@ -34,24 +34,6 @@ jobs:
             echo "No migrations found"
           fi
 
-      - name: Deploy Database Migrations
-        if: steps.check_migrations.outputs.migrations_exist == 'true'
-        env:
-          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
-          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
-        run: |
-          echo "Deploying database migrations..."
-          
-          # Deploy migrations using project-ref directly
-          supabase db push --project-ref $SUPABASE_PROJECT_ID --include-all
-          
-          if [ $? -eq 0 ]; then
-            echo "✅ Database migrations deployed successfully"
-          else
-            echo "❌ Failed to deploy database migrations"
-            exit 1
-          fi
-
       - name: Check for edge functions
         id: check_functions
         run: |
@@ -64,6 +46,40 @@ jobs:
             echo "No edge functions found"
           fi
 
+      - name: Link Supabase Project
+        if: steps.check_migrations.outputs.migrations_exist == 'true' || steps.check_functions.outputs.functions_exist == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+        run: |
+          echo "Linking Supabase project..."
+          supabase link --project-ref $SUPABASE_PROJECT_ID
+          
+          if [ $? -eq 0 ]; then
+            echo "✅ Project linked successfully"
+          else
+            echo "❌ Failed to link project"
+            exit 1
+          fi
+
+      - name: Deploy Database Migrations
+        if: steps.check_migrations.outputs.migrations_exist == 'true'
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          SUPABASE_PROJECT_ID: ${{ secrets.SUPABASE_PROJECT_ID }}
+        run: |
+          echo "Deploying database migrations..."
+          
+          # Deploy migrations after linking project
+          supabase db push --include-all
+          
+          if [ $? -eq 0 ]; then
+            echo "✅ Database migrations deployed successfully"
+          else
+            echo "❌ Failed to deploy database migrations"
+            exit 1
+          fi
+
       - name: Deploy Edge Functions
         if: steps.check_functions.outputs.functions_exist == 'true'
         env:
@@ -72,8 +88,8 @@ jobs:
         run: |
           echo "Deploying edge functions..."
           
-          # Deploy all edge functions without linking (using project-ref directly)
-          supabase functions deploy --project-ref $SUPABASE_PROJECT_ID
+          # Deploy all edge functions after linking project
+          supabase functions deploy
           
           if [ $? -eq 0 ]; then
             echo "✅ Edge functions deployed successfully"
@@ -93,7 +109,7 @@ jobs:
           # Set OpenAI API key if provided
           if [ ! -z "${{ secrets.OPENAI_API_KEY }}" ]; then
             echo "Setting OpenAI API key..."
-            supabase secrets set OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" --project-ref $SUPABASE_PROJECT_ID
+            supabase secrets set OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}"
             
             if [ $? -eq 0 ]; then
               echo "✅ OpenAI API key configured successfully"
