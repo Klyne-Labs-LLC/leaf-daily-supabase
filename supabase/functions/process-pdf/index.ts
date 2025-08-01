@@ -78,25 +78,33 @@ serve(async (req) => {
     const chapters = await detectIntelligentChapters(extractedText, book.title);
     console.log(`Detected ${chapters.length} chapters`);
     
-    // Process chapters for database storage
-    const processedChapters = chapters.map((chapter, index) => ({
-      book_id: bookId,
-      chapter_number: index + 1,
-      part_number: 1,
-      title: chapter.title,
-      content: chapter.content,
-      summary: null, // Will be generated later
-      word_count: chapter.wordCount,
-      reading_time_minutes: Math.ceil(chapter.wordCount / 200), // 200 words per minute
-      highlight_quotes: [], // Will be extracted later
-      metadata: {
-        extraction_method: chapter.detectionMethod,
-        detection_confidence: chapter.confidence,
-        start_index: chapter.startIndex,
-        end_index: chapter.endIndex,
-        extracted_at: new Date().toISOString()
-      }
-    }));
+    // Process chapters with OpenAI enhancement
+    console.log('Processing chapters with OpenAI for better readability...');
+    const processedChapters = await Promise.all(
+      chapters.map(async (chapter, index) => {
+        const enhancedChapter = await enhanceChapterWithAI(chapter, book.title, index + 1);
+        
+        return {
+          book_id: bookId,
+          chapter_number: index + 1,
+          part_number: 1,
+          title: enhancedChapter.title,
+          content: enhancedChapter.content,
+          summary: enhancedChapter.summary,
+          word_count: enhancedChapter.content.split(/\s+/).length,
+          reading_time_minutes: Math.ceil(enhancedChapter.content.split(/\s+/).length / 200),
+          highlight_quotes: enhancedChapter.keyQuotes || [],
+          metadata: {
+            extraction_method: chapter.detectionMethod,
+            detection_confidence: chapter.confidence,
+            start_index: chapter.startIndex,
+            end_index: chapter.endIndex,
+            extracted_at: new Date().toISOString(),
+            ai_enhanced: true
+          }
+        };
+      })
+    );
 
     // Save chapters to database
     const { error: chaptersError } = await supabase
@@ -392,4 +400,103 @@ function createOptimizedChunks(text: string, bookTitle: string): Chapter[] {
   
   console.log(`Optimized chunking complete: created ${chapters.length} chapters`);
   return chapters;
+}
+
+async function enhanceChapterWithAI(chapter: Chapter, bookTitle: string, chapterNumber: number) {
+  const openAIApiKey = Deno.env.get('OPENAI_API_KEY');
+  
+  if (!openAIApiKey) {
+    console.log('OpenAI API key not found, returning chapter without AI enhancement');
+    return {
+      title: chapter.title,
+      content: chapter.content,
+      summary: 'AI enhancement unavailable - no API key configured',
+      keyQuotes: []
+    };
+  }
+
+  try {
+    console.log(`Enhancing chapter ${chapterNumber} with OpenAI...`);
+    
+    // Create a smart prompt for chapter enhancement
+    const prompt = `You are an expert editor and reading comprehension specialist. Your task is to transform this raw extracted text from a PDF into a well-formatted, readable chapter.
+
+BOOK TITLE: "${bookTitle}"
+CHAPTER NUMBER: ${chapterNumber}
+RAW TEXT LENGTH: ${chapter.content.length} characters
+
+TASKS:
+1. Create an engaging, descriptive chapter title (max 80 characters)
+2. Reformat the content into clean, readable paragraphs with proper structure
+3. Fix formatting issues, merge broken sentences, and improve readability
+4. Create a concise summary (100-200 words) highlighting key points
+5. Extract 3-5 key quotes or important statements from the content
+
+FORMATTING GUIDELINES:
+- Use proper paragraph breaks
+- Maintain original meaning and technical accuracy
+- Remove redundant headers/footers/page numbers
+- Ensure smooth flow between sentences
+- Keep all important information intact
+
+RAW TEXT:
+${chapter.content}
+
+Please respond in this EXACT JSON format:
+{
+  "title": "Enhanced chapter title here",
+  "content": "Formatted and cleaned chapter content here with proper paragraphs...",
+  "summary": "Concise 100-200 word summary highlighting the main points and takeaways...",
+  "keyQuotes": ["Important quote 1", "Important quote 2", "Important quote 3"]
+}`;
+
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${openAIApiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [
+          {
+            role: 'system',
+            content: 'You are an expert editor who transforms raw PDF text into clean, readable content. Always respond with valid JSON only, no additional text.'
+          },
+          {
+            role: 'user',
+            content: prompt
+          }
+        ],
+        temperature: 0.3,
+        max_tokens: 4000
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenAI API error: ${response.status}`);
+    }
+
+    const data = await response.json();
+    const aiResponse = data.choices[0].message.content;
+    
+    try {
+      const enhancedChapter = JSON.parse(aiResponse);
+      console.log(`Successfully enhanced chapter ${chapterNumber}`);
+      return enhancedChapter;
+    } catch (parseError) {
+      console.error('Failed to parse AI response as JSON:', parseError);
+      throw new Error('Invalid AI response format');
+    }
+
+  } catch (error) {
+    console.error(`Error enhancing chapter ${chapterNumber} with AI:`, error);
+    // Fallback to basic formatting if AI fails
+    return {
+      title: chapter.title,
+      content: chapter.content,
+      summary: `Chapter ${chapterNumber} from ${bookTitle}. AI enhancement failed, showing original content.`,
+      keyQuotes: []
+    };
+  }
 }
