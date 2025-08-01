@@ -70,13 +70,17 @@ serve(async (req) => {
 
     console.log(`PDF file size: ${fileData.size} bytes`);
 
-    // Extract text from PDF using unpdf
-    const extractedText = await extractTextFromPDF(fileData);
-    console.log(`Extracted text length: ${extractedText.length} characters`);
+    // Extract pages from PDF using unpdf
+    const pages = await extractPagesFromPDF(fileData);
+    console.log(`Extracted ${pages.length} pages from PDF`);
     
-    // Detect chapters using semantic analysis
-    const chapters = await detectChapters(extractedText, book.title);
-    console.log(`Detected ${chapters.length} chapters`);
+    // Analyze PDF structure and detect chapter page ranges
+    const chapterRanges = await detectChapterPageRanges(pages, book.title);
+    console.log(`Detected ${chapterRanges.length} chapter ranges`);
+    
+    // Extract chapters based on page ranges
+    const chapters = await extractChaptersFromPages(pages, chapterRanges);
+    console.log(`Extracted ${chapters.length} chapters`);
     
     // Process chapters for database storage
     const processedChapters = chapters.map((chapter, index) => ({
@@ -162,61 +166,94 @@ serve(async (req) => {
   }
 });
 
-async function extractTextFromPDF(fileData: Blob): Promise<string> {
+async function extractPagesFromPDF(fileData: Blob): Promise<string[]> {
   try {
-    console.log('Starting PDF text extraction with unpdf...');
+    console.log('Starting page-by-page PDF extraction with unpdf...');
     
     // Convert blob to ArrayBuffer for unpdf
     const arrayBuffer = await fileData.arrayBuffer();
     const uint8Array = new Uint8Array(arrayBuffer);
     
-    // Extract text using unpdf
-    const { text } = await extractText(uint8Array, {
-      mergePages: true, // Combine all pages into single text
-      disableCombineTextItems: false, // Allow text combining for better readability
+    // Extract text page by page without merging
+    const { text, pages } = await extractText(uint8Array, {
+      mergePages: false, // Keep pages separate for intelligent splitting
+      disableCombineTextItems: false,
     });
     
-    if (!text || text.trim().length === 0) {
-      throw new Error('No text could be extracted from PDF');
+    if (!pages || pages.length === 0) {
+      throw new Error('No pages could be extracted from PDF');
     }
     
-    console.log(`Successfully extracted ${text.length} characters from PDF`);
-    return text;
+    console.log(`Successfully extracted ${pages.length} pages from PDF`);
+    return pages.map(page => page.text || '').filter(pageText => pageText.trim().length > 0);
     
   } catch (error) {
-    console.error('PDF extraction failed:', error);
-    throw new Error(`Failed to extract text from PDF: ${error.message}`);
+    console.error('PDF page extraction failed:', error);
+    throw new Error(`Failed to extract pages from PDF: ${error.message}`);
   }
 }
 
-async function detectChapters(text: string, bookTitle: string): Promise<Chapter[]> {
-  console.log('Starting chapter detection...');
+interface ChapterRange {
+  title: string;
+  startPage: number;
+  endPage: number;
+  confidence: number;
+  detectionMethod: string;
+}
+
+async function detectChapterPageRanges(pages: string[], bookTitle: string): Promise<ChapterRange[]> {
+  console.log('Starting intelligent chapter page range detection...');
   
-  // Clean up the text first
-  const cleanedText = cleanupText(text);
+  const chapterRanges: ChapterRange[] = [];
   
-  // Try different detection methods in order of preference
-  let chapters = detectChaptersByPatterns(cleanedText);
-  
-  if (chapters.length === 0) {
-    console.log('Pattern detection failed, trying page break method...');
-    chapters = detectChaptersByPageBreaks(cleanedText);
+  // Method 1: Look for chapter headings across pages
+  const patternRanges = detectChaptersByPagePatterns(pages);
+  if (patternRanges.length > 1) {
+    console.log(`Found ${patternRanges.length} chapters using pattern detection`);
+    return patternRanges;
   }
   
-  if (chapters.length === 0) {
-    console.log('All detection methods failed, creating single chapter...');
-    chapters = [{
-      title: bookTitle || 'Full Book',
-      content: cleanedText,
-      wordCount: cleanedText.split(/\s+/).length,
-      startIndex: 0,
-      endIndex: cleanedText.length,
-      detectionMethod: 'fallback_single',
-      confidence: 0.1
-    }];
+  // Method 2: Analyze page structure and content breaks
+  const structuralRanges = detectChaptersByPageStructure(pages);
+  if (structuralRanges.length > 1) {
+    console.log(`Found ${structuralRanges.length} chapters using structural analysis`);
+    return structuralRanges;
   }
   
-  console.log(`Chapter detection complete: ${chapters.length} chapters found`);
+  // Method 3: Smart page grouping based on content density
+  const densityRanges = detectChaptersByContentDensity(pages);
+  if (densityRanges.length > 1) {
+    console.log(`Found ${densityRanges.length} chapters using content density analysis`);
+    return densityRanges;
+  }
+  
+  // Fallback: Split into reasonable chunks if book is too large
+  const fallbackRanges = createFallbackChapterRanges(pages, bookTitle);
+  console.log(`Using fallback method: ${fallbackRanges.length} chapters`);
+  return fallbackRanges;
+}
+
+async function extractChaptersFromPages(pages: string[], chapterRanges: ChapterRange[]): Promise<Chapter[]> {
+  const chapters: Chapter[] = [];
+  
+  for (const range of chapterRanges) {
+    const chapterPages = pages.slice(range.startPage, range.endPage + 1);
+    const content = chapterPages.join('\n\n').trim();
+    const cleanedContent = cleanupText(content);
+    
+    if (cleanedContent.length > 100) { // Only include substantial chapters
+      chapters.push({
+        title: range.title,
+        content: cleanedContent,
+        wordCount: cleanedContent.split(/\s+/).length,
+        startIndex: range.startPage,
+        endIndex: range.endPage,
+        detectionMethod: range.detectionMethod,
+        confidence: range.confidence
+      });
+    }
+  }
+  
   return chapters;
 }
 
@@ -232,124 +269,170 @@ function cleanupText(text: string): string {
     .replace(/[ \t]+/g, ' '); // Normalize spaces
 }
 
-function detectChaptersByPatterns(text: string): Chapter[] {
-  const chapters: Chapter[] = [];
-  const lines = text.split('\n');
-  
-  // Patterns for chapter detection (in order of preference)
+function detectChaptersByPagePatterns(pages: string[]): ChapterRange[] {
+  const ranges: ChapterRange[] = [];
   const chapterPatterns = [
     /^(Chapter\s+)(\d+|[IVXLCDM]+|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|Eleven|Twelve|Thirteen|Fourteen|Fifteen|Sixteen|Seventeen|Eighteen|Nineteen|Twenty)\s*:?\s*(.*)$/i,
     /^(Ch\.?\s+)(\d+|[IVXLCDM]+)\s*:?\s*(.*)$/i,
     /^(\d+|[IVXLCDM]+)\.\s+(.+)$/,
-    /^(Part\s+)(\d+|[IVXLCDM]+|One|Two|Three|Four|Five)\s*:?\s*(.*)$/i,
-    /^(Section\s+)(\d+|[IVXLCDM]+)\s*:?\s*(.*)$/i
+    /^(Part\s+)(\d+|[IVXLCDM]+|One|Two|Three|Four|Five)\s*:?\s*(.*)$/i
   ];
   
-  let currentChapter: Partial<Chapter> = {};
-  let currentContent: string[] = [];
-  let chapterCount = 0;
+  let lastChapterPage = -1;
   
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i].trim();
-    let isChapterStart = false;
-    let chapterTitle = '';
-    let confidence = 0;
+  for (let pageNum = 0; pageNum < pages.length; pageNum++) {
+    const page = pages[pageNum];
+    const lines = page.split('\n');
     
-    // Check against all patterns
-    for (const pattern of chapterPatterns) {
-      const match = line.match(pattern);
-      if (match) {
-        isChapterStart = true;
-        confidence = chapterPatterns.indexOf(pattern) === 0 ? 0.9 : 0.7;
-        
-        // Construct chapter title
-        if (match[3]) {
-          chapterTitle = `${match[1]}${match[2]}: ${match[3]}`.trim();
-        } else if (match[2]) {
-          chapterTitle = `${match[1]}${match[2]}`.trim();
-        } else {
-          chapterTitle = line;
+    for (const line of lines) {
+      const trimmedLine = line.trim();
+      
+      for (const pattern of chapterPatterns) {
+        const match = trimmedLine.match(pattern);
+        if (match) {
+          // Save previous chapter if exists
+          if (lastChapterPage >= 0) {
+            const prevRange = ranges[ranges.length - 1];
+            if (prevRange) {
+              prevRange.endPage = pageNum - 1;
+            }
+          }
+          
+          // Create new chapter range
+          let title = '';
+          if (match[3]) {
+            title = `${match[1]}${match[2]}: ${match[3]}`.trim();
+          } else if (match[2]) {
+            title = `${match[1]}${match[2]}`.trim();
+          } else {
+            title = trimmedLine;
+          }
+          
+          ranges.push({
+            title: title,
+            startPage: pageNum,
+            endPage: pages.length - 1, // Will be updated when next chapter is found
+            confidence: 0.9,
+            detectionMethod: 'page_pattern_matching'
+          });
+          
+          lastChapterPage = pageNum;
+          break;
         }
-        break;
       }
-    }
-    
-    // If we found a chapter start and we have previous content, save the previous chapter
-    if (isChapterStart && currentContent.length > 0) {
-      const content = currentContent.join('\n').trim();
-      if (content.length > 100) { // Only save chapters with substantial content
-        chapters.push({
-          title: currentChapter.title || `Chapter ${chapterCount + 1}`,
-          content: content,
-          wordCount: content.split(/\s+/).length,
-          startIndex: currentChapter.startIndex || 0,
-          endIndex: text.indexOf(content) + content.length,
-          detectionMethod: 'pattern_matching',
-          confidence: currentChapter.confidence || 0.5
-        });
-        chapterCount++;
-      }
-      currentContent = [];
-    }
-    
-    // Start new chapter
-    if (isChapterStart) {
-      currentChapter = {
-        title: chapterTitle,
-        startIndex: text.indexOf(line),
-        confidence: confidence
-      };
-    } else if (line.length > 0) {
-      currentContent.push(line);
     }
   }
   
-  // Save the last chapter
-  if (currentContent.length > 0) {
-    const content = currentContent.join('\n').trim();
-    if (content.length > 100) {
-      chapters.push({
-        title: currentChapter.title || `Chapter ${chapterCount + 1}`,
-        content: content,
-        wordCount: content.split(/\s+/).length,
-        startIndex: currentChapter.startIndex || 0,
-        endIndex: text.length,
-        detectionMethod: 'pattern_matching',
-        confidence: currentChapter.confidence || 0.5
+  return ranges;
+}
+
+function detectChaptersByPageStructure(pages: string[]): ChapterRange[] {
+  const ranges: ChapterRange[] = [];
+  const minChapterPages = 5; // Minimum pages per chapter
+  const maxChapterPages = 50; // Maximum pages per chapter for reasonable chunks
+  
+  // Look for structural breaks: pages with very little content followed by new content
+  const breakPoints: number[] = [0]; // Always start with page 0
+  
+  for (let i = 1; i < pages.length - 1; i++) {
+    const currentPage = pages[i].trim();
+    const nextPage = pages[i + 1].trim();
+    
+    // Detect potential chapter breaks
+    const isShortPage = currentPage.length < 200; // Very short page
+    const nextPageStartsWithCapital = /^[A-Z]/.test(nextPage);
+    const hasChapterLikeStart = /^(Chapter|CHAPTER|Ch\.|Part|PART|Section)/i.test(nextPage.split('\n')[0]);
+    
+    if ((isShortPage && nextPageStartsWithCapital) || hasChapterLikeStart) {
+      breakPoints.push(i + 1);
+    }
+  }
+  
+  breakPoints.push(pages.length); // Always end with last page
+  
+  // Create chapter ranges from break points
+  for (let i = 0; i < breakPoints.length - 1; i++) {
+    const startPage = breakPoints[i];
+    const endPage = breakPoints[i + 1] - 1;
+    const chapterLength = endPage - startPage + 1;
+    
+    // Only create chapter if it's a reasonable length
+    if (chapterLength >= minChapterPages && chapterLength <= maxChapterPages) {
+      const firstPageContent = pages[startPage].split('\n')[0].trim();
+      const title = firstPageContent.length > 0 && firstPageContent.length < 100 
+        ? firstPageContent 
+        : `Chapter ${i + 1}`;
+        
+      ranges.push({
+        title: title,
+        startPage: startPage,
+        endPage: endPage,
+        confidence: 0.7,
+        detectionMethod: 'page_structure_analysis'
       });
     }
   }
   
-  console.log(`Pattern detection found ${chapters.length} chapters`);
-  return chapters;
+  return ranges;
 }
 
-function detectChaptersByPageBreaks(text: string): Chapter[] {
-  const chapters: Chapter[] = [];
+function detectChaptersByContentDensity(pages: string[]): ChapterRange[] {
+  const ranges: ChapterRange[] = [];
+  const targetWordsPerChapter = 5000; // Target ~5000 words per chapter
+  const minWordsPerChapter = 2000;   // Minimum words per chapter
   
-  // Split by potential chapter breaks (multiple newlines + potential page markers)
-  const sections = text.split(/\n\s*\n\s*\n/);
+  let currentChapterStart = 0;
+  let currentWordCount = 0;
+  let chapterNumber = 1;
   
-  if (sections.length > 1) {
-    sections.forEach((section, index) => {
-      const trimmedSection = section.trim();
-      if (trimmedSection.length > 500) { // Only consider substantial sections
-        const firstLine = trimmedSection.split('\n')[0].trim();
-        const title = firstLine.length < 100 ? firstLine : `Chapter ${index + 1}`;
-        
-        chapters.push({
+  for (let i = 0; i < pages.length; i++) {
+    const pageWordCount = pages[i].split(/\s+/).length;
+    currentWordCount += pageWordCount;
+    
+    // If we've hit our target or we're at the end
+    if (currentWordCount >= targetWordsPerChapter || i === pages.length - 1) {
+      // Only create chapter if it meets minimum requirements
+      if (currentWordCount >= minWordsPerChapter || ranges.length === 0) {
+        const firstPageContent = pages[currentChapterStart].split('\n')[0].trim();
+        const title = firstPageContent.length > 0 && firstPageContent.length < 100 
+          ? firstPageContent 
+          : `Chapter ${chapterNumber}`;
+          
+        ranges.push({
           title: title,
-          content: trimmedSection,
-          wordCount: trimmedSection.split(/\s+/).length,
-          startIndex: text.indexOf(trimmedSection),
-          endIndex: text.indexOf(trimmedSection) + trimmedSection.length,
-          detectionMethod: 'page_breaks',
-          confidence: 0.6
+          startPage: currentChapterStart,
+          endPage: i,
+          confidence: 0.6,
+          detectionMethod: 'content_density_analysis'
         });
+        
+        chapterNumber++;
+        currentChapterStart = i + 1;
+        currentWordCount = 0;
       }
+    }
+  }
+  
+  return ranges;
+}
+
+function createFallbackChapterRanges(pages: string[], bookTitle: string): ChapterRange[] {
+  const ranges: ChapterRange[] = [];
+  const pagesPerChapter = Math.max(10, Math.floor(pages.length / 20)); // Max 20 chapters, min 10 pages each
+  
+  for (let i = 0; i < pages.length; i += pagesPerChapter) {
+    const startPage = i;
+    const endPage = Math.min(i + pagesPerChapter - 1, pages.length - 1);
+    const chapterNumber = Math.floor(i / pagesPerChapter) + 1;
+    
+    ranges.push({
+      title: `${bookTitle} - Part ${chapterNumber}`,
+      startPage: startPage,
+      endPage: endPage,
+      confidence: 0.3,
+      detectionMethod: 'fallback_chunking'
     });
   }
   
-  console.log(`Page break detection found ${chapters.length} chapters`);
-  return chapters;
+  return ranges;
 }
