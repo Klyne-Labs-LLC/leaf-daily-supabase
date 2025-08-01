@@ -70,17 +70,13 @@ serve(async (req) => {
 
     console.log(`PDF file size: ${fileData.size} bytes`);
 
-    // Extract pages from PDF using unpdf
-    const pages = await extractPagesFromPDF(fileData);
-    console.log(`Extracted ${pages.length} pages from PDF`);
+    // Extract text from PDF using memory-efficient approach
+    const extractedText = await extractTextFromPDF(fileData);
+    console.log(`Extracted text length: ${extractedText.length} characters`);
     
-    // Analyze PDF structure and detect chapter page ranges
-    const chapterRanges = await detectChapterPageRanges(pages, book.title);
-    console.log(`Detected ${chapterRanges.length} chapter ranges`);
-    
-    // Extract chapters based on page ranges
-    const chapters = await extractChaptersFromPages(pages, chapterRanges);
-    console.log(`Extracted ${chapters.length} chapters`);
+    // Use intelligent text-based chapter detection with size optimization
+    const chapters = await detectIntelligentChapters(extractedText, book.title);
+    console.log(`Detected ${chapters.length} chapters`);
     
     // Process chapters for database storage
     const processedChapters = chapters.map((chapter, index) => ({
@@ -166,90 +162,112 @@ serve(async (req) => {
   }
 });
 
-async function extractPagesFromPDF(fileData: Blob): Promise<string[]> {
+async function extractTextFromPDF(fileData: Blob): Promise<string> {
   try {
-    console.log('Starting page-by-page PDF extraction with unpdf...');
+    console.log('Starting memory-efficient PDF text extraction with unpdf...');
     
     // Convert blob to ArrayBuffer for unpdf
     const arrayBuffer = await fileData.arrayBuffer();
     const uint8Array = new Uint8Array(arrayBuffer);
     
-    // Extract text page by page without merging
-    const { text, pages } = await extractText(uint8Array, {
-      mergePages: false, // Keep pages separate for intelligent splitting
+    // Extract text using unpdf with memory optimization
+    const { text } = await extractText(uint8Array, {
+      mergePages: true, // Merge pages to reduce memory usage
       disableCombineTextItems: false,
     });
     
-    if (!pages || pages.length === 0) {
-      throw new Error('No pages could be extracted from PDF');
+    if (!text || text.trim().length === 0) {
+      throw new Error('No text could be extracted from PDF');
     }
     
-    console.log(`Successfully extracted ${pages.length} pages from PDF`);
-    return pages.map(page => page.text || '').filter(pageText => pageText.trim().length > 0);
+    console.log(`Successfully extracted ${text.length} characters from PDF`);
+    return text;
     
   } catch (error) {
-    console.error('PDF page extraction failed:', error);
-    throw new Error(`Failed to extract pages from PDF: ${error.message}`);
+    console.error('PDF extraction failed:', error);
+    throw new Error(`Failed to extract text from PDF: ${error.message}`);
   }
 }
 
-interface ChapterRange {
-  title: string;
-  startPage: number;
-  endPage: number;
-  confidence: number;
-  detectionMethod: string;
+async function detectIntelligentChapters(text: string, bookTitle: string): Promise<Chapter[]> {
+  console.log('Starting intelligent chapter detection...');
+  
+  // Clean up the text first
+  const cleanedText = cleanupText(text);
+  
+  // Method 1: Advanced pattern matching with better chapter detection
+  let chapters = detectAdvancedChapterPatterns(cleanedText);
+  
+  if (chapters.length <= 1) {
+    console.log('Advanced pattern detection found few chapters, trying content-based splitting...');
+    chapters = detectChaptersByContentAnalysis(cleanedText, bookTitle);
+  }
+  
+  if (chapters.length === 0) {
+    console.log('All detection methods failed, creating optimized chunks...');
+    chapters = createOptimizedChunks(cleanedText, bookTitle);
+  }
+  
+  console.log(`Intelligent chapter detection complete: ${chapters.length} chapters found`);
+  return chapters;
 }
 
-async function detectChapterPageRanges(pages: string[], bookTitle: string): Promise<ChapterRange[]> {
-  console.log('Starting intelligent chapter page range detection...');
-  
-  const chapterRanges: ChapterRange[] = [];
-  
-  // Method 1: Look for chapter headings across pages
-  const patternRanges = detectChaptersByPagePatterns(pages);
-  if (patternRanges.length > 1) {
-    console.log(`Found ${patternRanges.length} chapters using pattern detection`);
-    return patternRanges;
-  }
-  
-  // Method 2: Analyze page structure and content breaks
-  const structuralRanges = detectChaptersByPageStructure(pages);
-  if (structuralRanges.length > 1) {
-    console.log(`Found ${structuralRanges.length} chapters using structural analysis`);
-    return structuralRanges;
-  }
-  
-  // Method 3: Smart page grouping based on content density
-  const densityRanges = detectChaptersByContentDensity(pages);
-  if (densityRanges.length > 1) {
-    console.log(`Found ${densityRanges.length} chapters using content density analysis`);
-    return densityRanges;
-  }
-  
-  // Fallback: Split into reasonable chunks if book is too large
-  const fallbackRanges = createFallbackChapterRanges(pages, bookTitle);
-  console.log(`Using fallback method: ${fallbackRanges.length} chapters`);
-  return fallbackRanges;
-}
-
-async function extractChaptersFromPages(pages: string[], chapterRanges: ChapterRange[]): Promise<Chapter[]> {
+function detectAdvancedChapterPatterns(text: string): Chapter[] {
   const chapters: Chapter[] = [];
   
-  for (const range of chapterRanges) {
-    const chapterPages = pages.slice(range.startPage, range.endPage + 1);
-    const content = chapterPages.join('\n\n').trim();
-    const cleanedContent = cleanupText(content);
+  // Enhanced patterns with better matching
+  const chapterPatterns = [
+    /^(?:Chapter|CHAPTER)\s+(\d+|[IVXLCDM]+|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|Eleven|Twelve|Thirteen|Fourteen|Fifteen|Sixteen|Seventeen|Eighteen|Nineteen|Twenty)(?:\s*[:\.\-]\s*(.*))?$/gim,
+    /^(?:Ch\.?|CH\.?)\s+(\d+|[IVXLCDM]+)(?:\s*[:\.\-]\s*(.*))?$/gim,
+    /^(?:Part|PART)\s+(\d+|[IVXLCDM]+|One|Two|Three|Four|Five)(?:\s*[:\.\-]\s*(.*))?$/gim,
+    /^(\d+)[\.\)]\s+(.+)$/gm,
+    /^\s*(\d+|[IVXLCDM]+)\s*[\.\-]\s*(.+)$/gm
+  ];
+  
+  const lines = text.split('\n');
+  let chapterMatches: Array<{index: number, title: string, lineNum: number}> = [];
+  
+  // Find all potential chapter starts
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i].trim();
+    if (line.length < 3 || line.length > 150) continue; // Skip very short/long lines
     
-    if (cleanedContent.length > 100) { // Only include substantial chapters
+    for (const pattern of chapterPatterns) {
+      pattern.lastIndex = 0; // Reset regex
+      const match = pattern.exec(line);
+      if (match) {
+        const title = match[2] ? `Chapter ${match[1]}: ${match[2]}` : `Chapter ${match[1]}`;
+        const textIndex = text.indexOf(line);
+        chapterMatches.push({
+          index: textIndex,
+          title: title.trim(),
+          lineNum: i
+        });
+        break;
+      }
+    }
+  }
+  
+  // Sort matches by position and create chapters
+  chapterMatches.sort((a, b) => a.index - b.index);
+  
+  for (let i = 0; i < chapterMatches.length; i++) {
+    const match = chapterMatches[i];
+    const nextMatch = chapterMatches[i + 1];
+    
+    const startIndex = match.index;
+    const endIndex = nextMatch ? nextMatch.index : text.length;
+    const content = text.substring(startIndex, endIndex).trim();
+    
+    if (content.length > 500) { // Only substantial chapters
       chapters.push({
-        title: range.title,
-        content: cleanedContent,
-        wordCount: cleanedContent.split(/\s+/).length,
-        startIndex: range.startPage,
-        endIndex: range.endPage,
-        detectionMethod: range.detectionMethod,
-        confidence: range.confidence
+        title: match.title,
+        content: content,
+        wordCount: content.split(/\s+/).length,
+        startIndex: startIndex,
+        endIndex: endIndex,
+        detectionMethod: 'advanced_pattern_matching',
+        confidence: 0.9
       });
     }
   }
@@ -269,170 +287,80 @@ function cleanupText(text: string): string {
     .replace(/[ \t]+/g, ' '); // Normalize spaces
 }
 
-function detectChaptersByPagePatterns(pages: string[]): ChapterRange[] {
-  const ranges: ChapterRange[] = [];
-  const chapterPatterns = [
-    /^(Chapter\s+)(\d+|[IVXLCDM]+|One|Two|Three|Four|Five|Six|Seven|Eight|Nine|Ten|Eleven|Twelve|Thirteen|Fourteen|Fifteen|Sixteen|Seventeen|Eighteen|Nineteen|Twenty)\s*:?\s*(.*)$/i,
-    /^(Ch\.?\s+)(\d+|[IVXLCDM]+)\s*:?\s*(.*)$/i,
-    /^(\d+|[IVXLCDM]+)\.\s+(.+)$/,
-    /^(Part\s+)(\d+|[IVXLCDM]+|One|Two|Three|Four|Five)\s*:?\s*(.*)$/i
-  ];
+function detectChaptersByContentAnalysis(text: string, bookTitle: string): Chapter[] {
+  const chapters: Chapter[] = [];
+  const targetWordsPerChapter = 3000; // Target 3000 words per chapter for better readability
+  const minWordsPerChapter = 1500;    // Minimum words per chapter
+  const maxWordsPerChapter = 8000;    // Maximum words per chapter
   
-  let lastChapterPage = -1;
+  // Split text into paragraphs for better boundary detection
+  const paragraphs = text.split(/\n\s*\n/).filter(p => p.trim().length > 0);
   
-  for (let pageNum = 0; pageNum < pages.length; pageNum++) {
-    const page = pages[pageNum];
-    const lines = page.split('\n');
+  let currentChapter = '';
+  let currentWordCount = 0;
+  let chapterNumber = 1;
+  
+  for (let i = 0; i < paragraphs.length; i++) {
+    const paragraph = paragraphs[i].trim();
+    const paragraphWordCount = paragraph.split(/\s+/).length;
     
-    for (const line of lines) {
-      const trimmedLine = line.trim();
+    currentChapter += paragraph + '\n\n';
+    currentWordCount += paragraphWordCount;
+    
+    // Check if we should end this chapter
+    const shouldEndChapter = 
+      currentWordCount >= targetWordsPerChapter ||
+      (currentWordCount >= minWordsPerChapter && currentWordCount + paragraphWordCount > maxWordsPerChapter) ||
+      i === paragraphs.length - 1;
+    
+    if (shouldEndChapter && currentWordCount >= minWordsPerChapter) {
+      // Try to find a meaningful title from the first line
+      const firstLine = currentChapter.split('\n')[0].trim();
+      const title = (firstLine.length > 0 && firstLine.length < 100) 
+        ? firstLine 
+        : `${bookTitle} - Chapter ${chapterNumber}`;
       
-      for (const pattern of chapterPatterns) {
-        const match = trimmedLine.match(pattern);
-        if (match) {
-          // Save previous chapter if exists
-          if (lastChapterPage >= 0) {
-            const prevRange = ranges[ranges.length - 1];
-            if (prevRange) {
-              prevRange.endPage = pageNum - 1;
-            }
-          }
-          
-          // Create new chapter range
-          let title = '';
-          if (match[3]) {
-            title = `${match[1]}${match[2]}: ${match[3]}`.trim();
-          } else if (match[2]) {
-            title = `${match[1]}${match[2]}`.trim();
-          } else {
-            title = trimmedLine;
-          }
-          
-          ranges.push({
-            title: title,
-            startPage: pageNum,
-            endPage: pages.length - 1, // Will be updated when next chapter is found
-            confidence: 0.9,
-            detectionMethod: 'page_pattern_matching'
-          });
-          
-          lastChapterPage = pageNum;
-          break;
-        }
-      }
+      chapters.push({
+        title: title,
+        content: currentChapter.trim(),
+        wordCount: currentWordCount,
+        startIndex: text.indexOf(currentChapter.substring(0, 100)),
+        endIndex: text.indexOf(currentChapter.substring(0, 100)) + currentChapter.length,
+        detectionMethod: 'content_analysis',
+        confidence: 0.7
+      });
+      
+      chapterNumber++;
+      currentChapter = '';
+      currentWordCount = 0;
     }
   }
   
-  return ranges;
+  return chapters;
 }
 
-function detectChaptersByPageStructure(pages: string[]): ChapterRange[] {
-  const ranges: ChapterRange[] = [];
-  const minChapterPages = 5; // Minimum pages per chapter
-  const maxChapterPages = 50; // Maximum pages per chapter for reasonable chunks
+function createOptimizedChunks(text: string, bookTitle: string): Chapter[] {
+  const chapters: Chapter[] = [];
+  const wordsPerChunk = 4000; // Optimal chunk size for reading
+  const words = text.split(/\s+/);
   
-  // Look for structural breaks: pages with very little content followed by new content
-  const breakPoints: number[] = [0]; // Always start with page 0
-  
-  for (let i = 1; i < pages.length - 1; i++) {
-    const currentPage = pages[i].trim();
-    const nextPage = pages[i + 1].trim();
+  for (let i = 0; i < words.length; i += wordsPerChunk) {
+    const chunkWords = words.slice(i, i + wordsPerChunk);
+    const content = chunkWords.join(' ');
     
-    // Detect potential chapter breaks
-    const isShortPage = currentPage.length < 200; // Very short page
-    const nextPageStartsWithCapital = /^[A-Z]/.test(nextPage);
-    const hasChapterLikeStart = /^(Chapter|CHAPTER|Ch\.|Part|PART|Section)/i.test(nextPage.split('\n')[0]);
-    
-    if ((isShortPage && nextPageStartsWithCapital) || hasChapterLikeStart) {
-      breakPoints.push(i + 1);
-    }
-  }
-  
-  breakPoints.push(pages.length); // Always end with last page
-  
-  // Create chapter ranges from break points
-  for (let i = 0; i < breakPoints.length - 1; i++) {
-    const startPage = breakPoints[i];
-    const endPage = breakPoints[i + 1] - 1;
-    const chapterLength = endPage - startPage + 1;
-    
-    // Only create chapter if it's a reasonable length
-    if (chapterLength >= minChapterPages && chapterLength <= maxChapterPages) {
-      const firstPageContent = pages[startPage].split('\n')[0].trim();
-      const title = firstPageContent.length > 0 && firstPageContent.length < 100 
-        ? firstPageContent 
-        : `Chapter ${i + 1}`;
-        
-      ranges.push({
-        title: title,
-        startPage: startPage,
-        endPage: endPage,
-        confidence: 0.7,
-        detectionMethod: 'page_structure_analysis'
+    if (content.trim().length > 100) {
+      const chapterNumber = Math.floor(i / wordsPerChunk) + 1;
+      chapters.push({
+        title: `${bookTitle} - Part ${chapterNumber}`,
+        content: content,
+        wordCount: chunkWords.length,
+        startIndex: i,
+        endIndex: i + chunkWords.length,
+        detectionMethod: 'optimized_chunking',
+        confidence: 0.5
       });
     }
   }
   
-  return ranges;
-}
-
-function detectChaptersByContentDensity(pages: string[]): ChapterRange[] {
-  const ranges: ChapterRange[] = [];
-  const targetWordsPerChapter = 5000; // Target ~5000 words per chapter
-  const minWordsPerChapter = 2000;   // Minimum words per chapter
-  
-  let currentChapterStart = 0;
-  let currentWordCount = 0;
-  let chapterNumber = 1;
-  
-  for (let i = 0; i < pages.length; i++) {
-    const pageWordCount = pages[i].split(/\s+/).length;
-    currentWordCount += pageWordCount;
-    
-    // If we've hit our target or we're at the end
-    if (currentWordCount >= targetWordsPerChapter || i === pages.length - 1) {
-      // Only create chapter if it meets minimum requirements
-      if (currentWordCount >= minWordsPerChapter || ranges.length === 0) {
-        const firstPageContent = pages[currentChapterStart].split('\n')[0].trim();
-        const title = firstPageContent.length > 0 && firstPageContent.length < 100 
-          ? firstPageContent 
-          : `Chapter ${chapterNumber}`;
-          
-        ranges.push({
-          title: title,
-          startPage: currentChapterStart,
-          endPage: i,
-          confidence: 0.6,
-          detectionMethod: 'content_density_analysis'
-        });
-        
-        chapterNumber++;
-        currentChapterStart = i + 1;
-        currentWordCount = 0;
-      }
-    }
-  }
-  
-  return ranges;
-}
-
-function createFallbackChapterRanges(pages: string[], bookTitle: string): ChapterRange[] {
-  const ranges: ChapterRange[] = [];
-  const pagesPerChapter = Math.max(10, Math.floor(pages.length / 20)); // Max 20 chapters, min 10 pages each
-  
-  for (let i = 0; i < pages.length; i += pagesPerChapter) {
-    const startPage = i;
-    const endPage = Math.min(i + pagesPerChapter - 1, pages.length - 1);
-    const chapterNumber = Math.floor(i / pagesPerChapter) + 1;
-    
-    ranges.push({
-      title: `${bookTitle} - Part ${chapterNumber}`,
-      startPage: startPage,
-      endPage: endPage,
-      confidence: 0.3,
-      detectionMethod: 'fallback_chunking'
-    });
-  }
-  
-  return ranges;
+  return chapters;
 }
