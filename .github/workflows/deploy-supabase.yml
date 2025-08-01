@@ -55,7 +55,7 @@ jobs:
         run: |
           echo "Linking Supabase project..."
           # Use password non-interactively for CI/CD
-          echo "$SUPABASE_DB_PASSWORD" | supabase link --project-ref $SUPABASE_PROJECT_ID --password-stdin
+          supabase link --project-ref $SUPABASE_PROJECT_ID --password "$SUPABASE_DB_PASSWORD"
           
           if [ $? -eq 0 ]; then
             echo "✅ Project linked successfully"
