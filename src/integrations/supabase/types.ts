@@ -14,7 +14,116 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      books: {
+        Row: {
+          author: string | null
+          created_at: string
+          estimated_total_reading_time: number | null
+          file_name: string
+          file_size: number | null
+          genre: string | null
+          id: string
+          processing_completed_at: string | null
+          processing_status: string
+          title: string
+          total_pages: number | null
+          total_word_count: number | null
+          updated_at: string
+          upload_date: string
+          user_id: string
+        }
+        Insert: {
+          author?: string | null
+          created_at?: string
+          estimated_total_reading_time?: number | null
+          file_name: string
+          file_size?: number | null
+          genre?: string | null
+          id?: string
+          processing_completed_at?: string | null
+          processing_status?: string
+          title: string
+          total_pages?: number | null
+          total_word_count?: number | null
+          updated_at?: string
+          upload_date?: string
+          user_id: string
+        }
+        Update: {
+          author?: string | null
+          created_at?: string
+          estimated_total_reading_time?: number | null
+          file_name?: string
+          file_size?: number | null
+          genre?: string | null
+          id?: string
+          processing_completed_at?: string | null
+          processing_status?: string
+          title?: string
+          total_pages?: number | null
+          total_word_count?: number | null
+          updated_at?: string
+          upload_date?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      chapters: {
+        Row: {
+          book_id: string
+          chapter_number: number
+          content: string
+          created_at: string
+          highlight_quotes: string[] | null
+          id: string
+          metadata: Json | null
+          part_number: number | null
+          reading_time_minutes: number
+          summary: string | null
+          title: string
+          updated_at: string
+          word_count: number
+        }
+        Insert: {
+          book_id: string
+          chapter_number: number
+          content: string
+          created_at?: string
+          highlight_quotes?: string[] | null
+          id?: string
+          metadata?: Json | null
+          part_number?: number | null
+          reading_time_minutes: number
+          summary?: string | null
+          title: string
+          updated_at?: string
+          word_count: number
+        }
+        Update: {
+          book_id?: string
+          chapter_number?: number
+          content?: string
+          created_at?: string
+          highlight_quotes?: string[] | null
+          id?: string
+          metadata?: Json | null
+          part_number?: number | null
+          reading_time_minutes?: number
+          summary?: string | null
+          title?: string
+          updated_at?: string
+          word_count?: number
+        }
+        Relationships: [
+          {
+            foreignKeyName: "chapters_book_id_fkey"
+            columns: ["book_id"]
+            isOneToOne: false
+            referencedRelation: "books"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
     }
     Views: {
       [_ in never]: never
