@@ -13,7 +13,10 @@ import {
   Quote,
   ChevronLeft,
   Menu,
-  Bookmark
+  Bookmark,
+  Loader2,
+  Sparkles,
+  Check
 } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 
@@ -28,6 +31,7 @@ interface Chapter {
   word_count: number;
   reading_time_minutes: number;
   highlight_quotes: string[];
+  enhancement_status: 'pending' | 'processing' | 'completed' | 'failed' | null;
 }
 
 interface Book {
@@ -37,6 +41,7 @@ interface Book {
   genre: string | null;
   total_word_count: number | null;
   estimated_total_reading_time: number | null;
+  enhancement_status: string | null;
 }
 
 interface BookReaderProps {
@@ -50,10 +55,33 @@ export const BookReader = ({ bookId, onBack }: BookReaderProps) => {
   const [currentChapterIndex, setCurrentChapterIndex] = useState(0);
   const [showSidebar, setShowSidebar] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [summariesGenerating, setSummariesGenerating] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
     fetchBookData();
+    
+    // Set up real-time subscription for chapter updates
+    const channel = supabase
+      .channel('chapter-updates')
+      .on(
+        'postgres_changes',
+        {
+          event: 'UPDATE',
+          schema: 'public',
+          table: 'chapters',
+          filter: `book_id=eq.${bookId}`
+        },
+        (payload) => {
+          console.log('Chapter updated:', payload);
+          handleChapterUpdate(payload.new as Chapter);
+        }
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
   }, [bookId]);
 
   const fetchBookData = async () => {
@@ -69,6 +97,11 @@ export const BookReader = ({ bookId, onBack }: BookReaderProps) => {
 
       if (bookError) throw bookError;
       setBook(bookData);
+
+      // Check if summaries are being generated
+      if (bookData.enhancement_status === 'processing') {
+        setSummariesGenerating(true);
+      }
 
       // Fetch chapters
       const { data: chaptersData, error: chaptersError } = await supabase
@@ -93,9 +126,51 @@ export const BookReader = ({ bookId, onBack }: BookReaderProps) => {
     }
   };
 
+  const handleChapterUpdate = (updatedChapter: Chapter) => {
+    setChapters(prevChapters => 
+      prevChapters.map(chapter => 
+        chapter.id === updatedChapter.id ? updatedChapter : chapter
+      )
+    );
+
+    // Show toast notification when a summary is completed
+    if (updatedChapter.enhancement_status === 'completed' && updatedChapter.summary) {
+      toast({
+        title: "✨ Summary Ready!",
+        description: `Chapter ${updatedChapter.chapter_number}: ${updatedChapter.title.substring(0, 50)}${updatedChapter.title.length > 50 ? '...' : ''}`,
+        duration: 4000,
+      });
+    }
+
+    // Check if all summaries are done
+    setChapters(prevChapters => {
+      const allChapters = prevChapters.map(chapter => 
+        chapter.id === updatedChapter.id ? updatedChapter : chapter
+      );
+      
+      const completedSummaries = allChapters.filter(ch => ch.summary).length;
+      const totalChapters = allChapters.length;
+      
+      if (completedSummaries === totalChapters && summariesGenerating) {
+        setSummariesGenerating(false);
+        toast({
+          title: "🎉 All Summaries Complete!",
+          description: `${totalChapters} AI-generated chapter summaries are now available for enhanced reading`,
+          duration: 6000,
+        });
+      }
+      
+      return allChapters;
+    });
+  };
+
   const currentChapter = chapters[currentChapterIndex];
   const totalChapters = chapters.length;
   const readingProgress = totalChapters > 0 ? ((currentChapterIndex + 1) / totalChapters) * 100 : 0;
+
+  // Calculate summary completion progress
+  const summariesCompleted = chapters.filter(ch => ch.summary).length;
+  const summaryProgress = totalChapters > 0 ? (summariesCompleted / totalChapters) * 100 : 0;
 
   const nextChapter = () => {
     if (currentChapterIndex < totalChapters - 1) {
@@ -112,6 +187,26 @@ export const BookReader = ({ bookId, onBack }: BookReaderProps) => {
   const goToChapter = (index: number) => {
     setCurrentChapterIndex(index);
     setShowSidebar(false);
+  };
+
+  const getSummaryStatus = (chapter: Chapter) => {
+    if (chapter.summary) return 'completed';
+    if (chapter.enhancement_status === 'processing') return 'processing';
+    if (chapter.enhancement_status === 'failed') return 'failed';
+    return 'pending';
+  };
+
+  const SummaryStatusIcon = ({ status }: { status: string }) => {
+    switch (status) {
+      case 'completed':
+        return <Check className="h-3 w-3 text-green-500" />;
+      case 'processing':
+        return <Loader2 className="h-3 w-3 animate-spin text-blue-500" />;
+      case 'failed':
+        return <span className="h-3 w-3 rounded-full bg-red-500" />;
+      default:
+        return <span className="h-3 w-3 rounded-full bg-gray-300" />;
+    }
   };
 
   if (loading) {
@@ -178,6 +273,21 @@ export const BookReader = ({ bookId, onBack }: BookReaderProps) => {
         
         {/* Progress Bar */}
         <Progress value={readingProgress} className="h-1 border-none" />
+
+        {/* Summary Generation Progress */}
+        {summariesGenerating && (
+          <div className="bg-blue-50 border-b px-4 py-2">
+            <div className="max-w-4xl mx-auto flex items-center gap-3">
+              <Sparkles className="h-4 w-4 text-blue-500" />
+              <div className="flex-1">
+                <p className="text-sm font-medium text-blue-700">
+                  Generating chapter summaries... ({summariesCompleted}/{totalChapters})
+                </p>
+                <Progress value={summaryProgress} className="h-1 mt-1" />
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="flex">
@@ -186,35 +296,68 @@ export const BookReader = ({ bookId, onBack }: BookReaderProps) => {
           showSidebar ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         } ${showSidebar ? 'md:block' : 'hidden md:block'}`}>
           <div className="p-4 h-full overflow-y-auto">
-            <h3 className="font-semibold mb-4 flex items-center gap-2">
-              <BookOpen className="h-5 w-5" />
-              Chapters
-            </h3>
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="font-semibold flex items-center gap-2">
+                <BookOpen className="h-5 w-5" />
+                Chapters
+              </h3>
+              {summariesGenerating && (
+                <Badge variant="secondary" className="text-xs">
+                  <Loader2 className="h-3 w-3 animate-spin mr-1" />
+                  Generating
+                </Badge>
+              )}
+            </div>
             <div className="space-y-2">
-              {chapters.map((chapter, index) => (
-                <button
-                  key={chapter.id}
-                  onClick={() => goToChapter(index)}
-                  className={`w-full text-left p-3 rounded-lg transition-colors ${
-                    index === currentChapterIndex 
-                      ? 'bg-chapter-highlight border border-primary/20' 
-                      : 'hover:bg-muted'
-                  }`}
-                >
-                  <div className="font-medium text-sm line-clamp-2">{chapter.title}</div>
-                  <div className="flex items-center gap-2 mt-1 text-xs text-muted-foreground">
-                    <Clock className="h-3 w-3" />
-                    {chapter.reading_time_minutes}m
-                    <span>•</span>
-                    {chapter.word_count} words
-                  </div>
-                  {chapter.summary && (
-                    <p className="text-xs text-muted-foreground mt-1 line-clamp-2">
-                      {chapter.summary}
-                    </p>
-                  )}
-                </button>
-              ))}
+              {chapters.map((chapter, index) => {
+                const summaryStatus = getSummaryStatus(chapter);
+                return (
+                  <button
+                    key={chapter.id}
+                    onClick={() => goToChapter(index)}
+                    className={`w-full text-left p-3 rounded-lg transition-colors relative ${
+                      index === currentChapterIndex 
+                        ? 'bg-chapter-highlight border border-primary/20' 
+                        : 'hover:bg-muted'
+                    }`}
+                  >
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1 min-w-0">
+                        <div className="font-medium text-sm line-clamp-2 mb-1">{chapter.title}</div>
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Clock className="h-3 w-3" />
+                          {chapter.reading_time_minutes}m
+                          <span>•</span>
+                          {chapter.word_count} words
+                        </div>
+                        {chapter.summary && (
+                          <div className="mt-2 p-2 bg-blue-50 rounded text-xs text-blue-700 line-clamp-2">
+                            <span className="font-medium">Summary:</span> {chapter.summary}
+                          </div>
+                        )}
+                        {summaryStatus === 'processing' && (
+                          <div className="mt-2 p-2 bg-blue-100 rounded">
+                            <p className="text-xs text-blue-700 font-medium flex items-center gap-1">
+                              <Loader2 className="h-3 w-3 animate-spin" />
+                              AI analyzing...
+                            </p>
+                          </div>
+                        )}
+                        {summaryStatus === 'failed' && (
+                          <div className="mt-2 p-2 bg-red-50 rounded">
+                            <p className="text-xs text-red-600">
+                              Summary generation failed
+                            </p>
+                          </div>
+                        )}
+                      </div>
+                      <div className="ml-2 flex-shrink-0">
+                        <SummaryStatusIcon status={summaryStatus} />
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
             </div>
           </div>
         </div>
@@ -238,20 +381,92 @@ export const BookReader = ({ bookId, onBack }: BookReaderProps) => {
               </Badge>
               <h2 className="text-3xl font-bold mb-4">{currentChapter.title}</h2>
               
-              {currentChapter.summary && (
-                <Card className="mb-6 bg-chapter-highlight border-primary/20">
+              {/* Enhanced Summary Section */}
+              {currentChapter.summary ? (
+                <Card className="mb-6 bg-gradient-to-br from-blue-50 to-indigo-50 border-blue-200 shadow-sm">
                   <CardHeader className="pb-3">
                     <CardTitle className="text-lg flex items-center gap-2">
-                      <Bookmark className="h-5 w-5" />
-                      Chapter Summary
+                      <Sparkles className="h-5 w-5 text-blue-600" />
+                      AI Chapter Summary
+                      <Badge variant="secondary" className="ml-auto text-xs bg-green-100 text-green-700">
+                        <Check className="h-3 w-3 mr-1" />
+                        Ready
+                      </Badge>
                     </CardTitle>
                   </CardHeader>
                   <CardContent>
-                    <p className="text-muted-foreground leading-relaxed">
-                      {currentChapter.summary}
+                    <div className="bg-white rounded-lg p-4 shadow-sm">
+                      <p className="text-gray-700 leading-relaxed text-base">
+                        {currentChapter.summary}
+                      </p>
+                      <div className="mt-3 pt-3 border-t border-gray-100 text-xs text-gray-500">
+                        Generated in seconds • {currentChapter.summary.split(' ').length} words
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : getSummaryStatus(currentChapter) === 'processing' ? (
+                <Card className="mb-6 bg-gradient-to-br from-blue-50 to-blue-100 border-blue-300 shadow-sm animate-pulse">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center gap-2">
+                      <Loader2 className="h-5 w-5 animate-spin text-blue-600" />
+                      AI Analyzing Chapter...
+                      <Badge variant="secondary" className="ml-auto text-xs bg-blue-100 text-blue-700">
+                        <Loader2 className="h-3 w-3 mr-1 animate-spin" />
+                        Processing
+                      </Badge>
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <div className="bg-white rounded-lg p-4 shadow-sm">
+                      <p className="text-blue-700 text-sm font-medium mb-2">
+                        Generating your personalized summary...
+                      </p>
+                      <p className="text-blue-600 text-sm mb-3">
+                        Extracting key insights and main points from this chapter.
+                      </p>
+                      <div className="flex items-center gap-3">
+                        <Progress value={undefined} className="h-2 flex-1 bg-blue-100" />
+                        <span className="text-xs text-blue-600 font-medium">~30s remaining</span>
+                      </div>
+                    </div>
+                  </CardContent>
+                </Card>
+              ) : getSummaryStatus(currentChapter) === 'failed' ? (
+                <Card className="mb-6 bg-red-50 border-red-200">
+                  <CardHeader className="pb-3">
+                    <CardTitle className="text-lg flex items-center gap-2 text-red-700">
+                      <span className="h-5 w-5 rounded-full bg-red-500 flex items-center justify-center">
+                        <span className="text-white text-xs">!</span>
+                      </span>
+                      Summary Generation Failed
+                    </CardTitle>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-red-600 text-sm">
+                      We couldn't generate a summary for this chapter. You can still read the full content below.
                     </p>
                   </CardContent>
                 </Card>
+              ) : (
+                summariesGenerating && (
+                  <Card className="mb-6 bg-gray-50 border-gray-200">
+                    <CardHeader className="pb-3">
+                      <CardTitle className="text-lg flex items-center gap-2">
+                        <div className="h-5 w-5 rounded-full bg-gray-300 animate-pulse" />
+                        Summary Queued
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent>
+                      <p className="text-gray-600 text-sm">
+                        This chapter is waiting for AI analysis. Summaries are generated chapter by chapter.
+                      </p>
+                      <div className="mt-2 text-xs text-gray-500">
+                        Position in queue: {chapters.findIndex(ch => ch.summary) + 1}/{totalChapters}
+                      </div>
+                    </CardContent>
+                  </Card>
+                )
               )}
             </div>
 
