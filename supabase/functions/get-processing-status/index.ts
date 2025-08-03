@@ -56,7 +56,13 @@ serve(async (req) => {
     const detailed = url.searchParams.get('detailed') === 'true';
     
     if (!bookId) {
-      throw new Error('Book ID is required');
+      return new Response(
+        JSON.stringify({ error: 'Book ID is required' }),
+        {
+          status: 400,
+          headers: { ...corsHeaders, 'Content-Type': 'application/json' }
+        }
+      );
     }
 
     console.log(`[STATUS] Getting processing status for book: ${bookId}`);
@@ -68,11 +74,19 @@ serve(async (req) => {
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
-  } catch (error) {
+  } catch (error: any) {
     console.error('[STATUS] Error:', error);
     
+    // Provide more detailed error information
+    const errorResponse = {
+      error: error.message || 'Unknown error occurred',
+      details: error.details || null,
+      hint: error.hint || null,
+      code: error.code || null
+    };
+    
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify(errorResponse),
       {
         status: 500,
         headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -89,47 +103,85 @@ async function getProcessingStatus(bookId: string, detailed: boolean): Promise<P
     .eq('id', bookId)
     .single();
 
-  if (bookError || !book) {
+  if (bookError) {
+    console.error('[STATUS] Database error fetching book:', bookError);
+    throw new Error(`Database error: ${bookError.message}`);
+  }
+  
+  if (!book) {
     throw new Error('Book not found');
   }
 
   // Get progress information
-  const { data: progressData, error: progressError } = await supabase
-    .from('processing_progress')
-    .select('*')
-    .eq('book_id', bookId)
-    .order('updated_at', { ascending: false })
-    .limit(10);
+  let progressData: any[] = [];
+  try {
+    const { data, error: progressError } = await supabase
+      .from('processing_progress')
+      .select('*')
+      .eq('book_id', bookId)
+      .order('updated_at', { ascending: false })
+      .limit(10);
 
-  if (progressError) {
-    console.warn('[STATUS] Failed to get progress data:', progressError);
+    if (progressError) {
+      console.warn('[STATUS] Failed to get progress data:', progressError);
+    } else {
+      progressData = data || [];
+    }
+  } catch (error) {
+    console.warn('[STATUS] Processing progress table might not exist:', error);
   }
 
   // Get job queue information (if detailed)
   let jobData: any[] = [];
   if (detailed) {
-    const { data, error } = await supabase
-      .from('processing_jobs')
-      .select('*')
-      .eq('book_id', bookId)
-      .order('created_at', { ascending: false })
-      .limit(20);
-    
-    if (!error && data) {
-      jobData = data;
+    try {
+      const { data, error } = await supabase
+        .from('processing_jobs')
+        .select('*')
+        .eq('book_id', bookId)
+        .order('created_at', { ascending: false })
+        .limit(20);
+      
+      if (!error && data) {
+        jobData = data;
+      } else if (error) {
+        console.warn('[STATUS] Failed to get job data:', error);
+      }
+    } catch (error) {
+      console.warn('[STATUS] Processing jobs table might not exist:', error);
     }
   }
 
   // Get chapter information for metrics
-  const { data: chapterData } = await supabase
+  const { data: chapterData, error: chapterError } = await supabase
     .from('chapters')
-    .select('id, word_count, enhancement_status')
+    .select('id, word_count')
     .eq('book_id', bookId);
+  
+  if (chapterError) {
+    console.warn('[STATUS] Failed to get chapter data:', chapterError);
+  }
 
   // Build comprehensive status
-  const status = buildProcessingStatus(book, progressData || [], jobData, chapterData || [], detailed);
-  
-  return status;
+  try {
+    const status = buildProcessingStatus(book, progressData || [], jobData, chapterData || [], detailed);
+    return status;
+  } catch (error) {
+    console.error('[STATUS] Error building status:', error);
+    
+    // Return a basic fallback status
+    return {
+      bookId: book.id,
+      status: book.processing_status || 'pending',
+      currentStage: 'unknown',
+      overallProgress: 0,
+      stageProgress: 0,
+      message: 'Status information temporarily unavailable',
+      stages: [],
+      metrics: { cacheHits: 0 },
+      error: 'Unable to build detailed status'
+    };
+  }
 }
 
 function buildProcessingStatus(

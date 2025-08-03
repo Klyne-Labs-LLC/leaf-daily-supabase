@@ -56,20 +56,39 @@ export const ProcessingProgress = ({ bookId, onComplete }: ProcessingProgressPro
 
     const fetchStatus = async () => {
       try {
-        const { data, error } = await supabase.functions.invoke('get-processing-status', {
-          body: { bookId, detailed: true }
+        // Get current session for auth
+        const { data: { session } } = await supabase.auth.getSession();
+        const authToken = session?.access_token || 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InVtZHJhbnBqb3BseGJneGtob2l4Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTQwNjA1NTAsImV4cCI6MjA2OTYzNjU1MH0.QHXRsTsxZex2whi0V0rO4yeIoKAzLjuBJBsNe2bMmMo';
+        
+        // Use fetch directly for GET request with query parameters
+        const response = await fetch(`https://umdranpjoplxbgxkhoix.supabase.co/functions/v1/get-processing-status?bookId=${encodeURIComponent(bookId)}&detailed=true`, {
+          method: 'GET',
+          headers: {
+            'Authorization': `Bearer ${authToken}`,
+            'Content-Type': 'application/json',
+          },
         });
 
-        if (error) throw error;
+        if (!response.ok) {
+          const errorText = await response.text();
+          throw new Error(`HTTP ${response.status}: ${errorText}`);
+        }
+
+        const data = await response.json();
+        
+        if (data.error) {
+          throw new Error(data.error);
+        }
         
         setStatus(data);
+        setError(null); // Clear any previous errors
         
         if (data.status === 'completed' && onComplete) {
           onComplete();
         }
       } catch (err: any) {
         console.error('Error fetching status:', err);
-        setError(err.message);
+        setError(err.message || 'Failed to fetch processing status');
       }
     };
 
