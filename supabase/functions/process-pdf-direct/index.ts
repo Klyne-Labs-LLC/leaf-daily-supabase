@@ -165,16 +165,29 @@ async function runDirectPipeline(bookId: string, config: WorkflowConfig): Promis
   // Step 5: Call enhance-chapters-async function if enabled
   if (config.enableAsyncEnhancement) {
     console.log(`[DIRECT-PROCESSOR] Calling enhance-chapters-async function...`);
-    const enhanceResult = await callFunction('enhance-chapters-async', { 
-      bookId, 
-      chapters: storeResult.chapters || detectResult.chapters.slice(0, 5), // First batch
-      batch_number: 1,
-      total_batches: Math.ceil((detectResult.chapters?.length || 0) / 5)
-    });
     
-    if (!enhanceResult.success) {
-      console.warn(`[DIRECT-PROCESSOR] Chapter enhancement failed: ${enhanceResult.error}`);
-      // Don't fail the entire workflow for enhancement failures
+    // Get the chapters from the database to pass proper chapter IDs
+    const { data: chaptersFromDB, error: chapterError } = await supabase
+      .from('chapters')
+      .select('id, chapter_number, title, content, word_count')
+      .eq('book_id', bookId)
+      .order('chapter_number')
+      .limit(5); // First 5 chapters
+    
+    if (chapterError || !chaptersFromDB || chaptersFromDB.length === 0) {
+      console.warn(`[DIRECT-PROCESSOR] Could not fetch chapters for enhancement: ${chapterError?.message}`);
+    } else {
+      const enhanceResult = await callFunction('enhance-chapters-async', { 
+        bookId, 
+        chapters: chaptersFromDB, // Pass actual chapter records with IDs
+        batch_number: 1,
+        total_batches: Math.ceil((detectResult.chapters?.length || 0) / 5)
+      });
+      
+      if (!enhanceResult.success) {
+        console.warn(`[DIRECT-PROCESSOR] Chapter enhancement failed: ${enhanceResult.error}`);
+        // Don't fail the entire workflow for enhancement failures
+      }
     }
   }
 
