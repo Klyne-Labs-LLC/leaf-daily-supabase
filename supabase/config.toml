@@ -1,4 +1,10 @@
 project_id = "umdranpjoplxbgxkhoix"
 
-[functions.process-pdf]
+[functions.process-pdf-simple]
+verify_jwt = false
+
+[functions.get-processing-status]
+verify_jwt = false
+
+[functions.enhance-chapters-async]
 verify_jwt = false

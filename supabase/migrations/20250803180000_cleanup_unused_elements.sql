@@ -67,16 +67,26 @@ DROP INDEX IF EXISTS idx_processing_jobs_depends_on;
 -- 5. REMOVE UNUSED ROW LEVEL SECURITY POLICIES
 -- ============================================================================
 
--- Clean up policies for dropped table
-DROP POLICY IF EXISTS "Users can view jobs for their books" ON public.processing_jobs;
-DROP POLICY IF EXISTS "Service role can manage all jobs" ON public.processing_jobs;
+-- Clean up policies for dropped table (only if table exists)
+DO $$ 
+BEGIN
+    IF EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'processing_jobs') THEN
+        DROP POLICY IF EXISTS "Users can view jobs for their books" ON public.processing_jobs;
+        DROP POLICY IF EXISTS "Service role can manage all jobs" ON public.processing_jobs;
+    END IF;
+END $$;
 
 -- ============================================================================
 -- 6. CLEAN UP TRIGGERS
 -- ============================================================================
 
--- Remove trigger for dropped table
-DROP TRIGGER IF EXISTS update_processing_jobs_updated_at ON public.processing_jobs;
+-- Remove trigger for dropped table (only if table exists)
+DO $$ 
+BEGIN
+    IF EXISTS (SELECT FROM information_schema.tables WHERE table_schema = 'public' AND table_name = 'processing_jobs') THEN
+        DROP TRIGGER IF EXISTS update_processing_jobs_updated_at ON public.processing_jobs;
+    END IF;
+END $$;
 
 -- Keep triggers for books and chapters as they're still used
 
@@ -95,10 +105,21 @@ DROP CONSTRAINT IF EXISTS unique_book_stage;
 -- 8. REVOKE UNUSED PERMISSIONS
 -- ============================================================================
 
--- Revoke permissions for dropped functions
-REVOKE ALL ON FUNCTION public.enqueue_job FROM service_role;
-REVOKE ALL ON FUNCTION public.get_next_job FROM service_role;
-REVOKE ALL ON FUNCTION public.complete_job FROM service_role;
+-- Revoke permissions for dropped functions (only if they exist)
+DO $$ 
+BEGIN
+    IF EXISTS (SELECT FROM information_schema.routines WHERE routine_schema = 'public' AND routine_name = 'enqueue_job') THEN
+        REVOKE ALL ON FUNCTION public.enqueue_job FROM service_role;
+    END IF;
+    
+    IF EXISTS (SELECT FROM information_schema.routines WHERE routine_schema = 'public' AND routine_name = 'get_next_job') THEN
+        REVOKE ALL ON FUNCTION public.get_next_job FROM service_role;
+    END IF;
+    
+    IF EXISTS (SELECT FROM information_schema.routines WHERE routine_schema = 'public' AND routine_name = 'complete_job') THEN
+        REVOKE ALL ON FUNCTION public.complete_job FROM service_role;
+    END IF;
+END $$;
 
 -- Keep permissions for functions that are still used:
 -- - update_processing_progress (used for progress tracking)
