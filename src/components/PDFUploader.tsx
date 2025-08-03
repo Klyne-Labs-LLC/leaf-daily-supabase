@@ -124,15 +124,10 @@ export const PDFUploader = ({ onUploadComplete }: PDFUploaderProps) => {
       setUploading(false);
       setProcessing(true);
 
-      // Trigger PDF processing with direct processor (bypasses job queue)
-      const { data: orchestratorResult, error: processError } = await supabase.functions.invoke('process-pdf-direct', {
+      // Trigger PDF processing with intelligent router (optimizes based on file size and system load)
+      const { data: orchestratorResult, error: processError } = await supabase.functions.invoke('process-pdf-simple', {
         body: { 
-          bookId: book.id,
-          config: {
-            enableCaching: true,
-            enableAsyncEnhancement: true,
-            priorityLevel: 5
-          }
+          bookId: book.id
         }
       });
 

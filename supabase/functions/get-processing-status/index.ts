@@ -23,6 +23,8 @@ interface ProcessingStatus {
   completedAt?: string;
   stages: StageStatus[];
   metrics: ProcessingMetrics;
+  performance?: PerformanceMetrics;
+  workflow?: WorkflowInfo;
   error?: string;
 }
 
@@ -43,6 +45,23 @@ interface ProcessingMetrics {
   processingTime?: number;
   cacheHits: number;
   enhancementStatus?: string;
+  chaptersEnhanced?: number;
+  chaptersFailed?: number;
+}
+
+interface PerformanceMetrics {
+  memoryUsagePeakMB?: number;
+  cacheHitRate?: number;
+  qualityScore?: number;
+  optimizationLevel: string;
+  apiCallsCount?: number;
+}
+
+interface WorkflowInfo {
+  strategy: string;
+  version: string;
+  optimizationLevel: string;
+  retryCount: number;
 }
 
 serve(async (req) => {
@@ -53,11 +72,13 @@ serve(async (req) => {
   try {
     const url = new URL(req.url);
     const bookId = url.searchParams.get('bookId');
+    const bookIds = url.searchParams.get('bookIds')?.split(',') || [];
     const detailed = url.searchParams.get('detailed') === 'true';
+    const includePerformance = url.searchParams.get('includePerformance') === 'true';
     
-    if (!bookId) {
+    if (!bookId && bookIds.length === 0) {
       return new Response(
-        JSON.stringify({ error: 'Book ID is required' }),
+        JSON.stringify({ error: 'bookId or bookIds parameter is required' }),
         {
           status: 400,
           headers: { ...corsHeaders, 'Content-Type': 'application/json' }
@@ -65,14 +86,22 @@ serve(async (req) => {
       );
     }
 
-    console.log(`[STATUS] Getting processing status for book: ${bookId}`);
+    const targetBookIds = bookId ? [bookId] : bookIds;
+    console.log(`[STATUS] Getting processing status for books: ${targetBookIds.join(', ')}`);
 
-    const status = await getProcessingStatus(bookId, detailed);
-
-    return new Response(
-      JSON.stringify(status),
-      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-    );
+    if (targetBookIds.length === 1) {
+      const status = await getProcessingStatus(targetBookIds[0], detailed, includePerformance);
+      return new Response(
+        JSON.stringify(status),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    } else {
+      const statuses = await getBatchProcessingStatus(targetBookIds, includePerformance);
+      return new Response(
+        JSON.stringify(statuses),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
 
   } catch (error: any) {
     console.error('[STATUS] Error:', error);

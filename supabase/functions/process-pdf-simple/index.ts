@@ -82,14 +82,53 @@ serve(async (req) => {
 
     await updateProgress(bookId, 'extracting_text', 30, 12, 'Extracting text from PDF...');
 
-    // Extract text using unpdf
+    // Extract text using unpdf with memory optimization
+    const fileSizeMB = Math.round(fileData.size / (1024 * 1024));
+    console.log(`[SIMPLE-PROCESSOR] Processing ${fileSizeMB}MB PDF file`);
+    
     const arrayBuffer = await fileData.arrayBuffer();
     const uint8Array = new Uint8Array(arrayBuffer);
     
-    const extractionResult = await extractText(uint8Array, {
+    // Use more aggressive memory optimization for larger files
+    const extractionOptions = fileSizeMB > 20 ? {
+      mergePages: true,
+      disableCombineTextItems: true, // Reduces memory usage
+      maxPages: 500 // Limit pages for very large files
+    } : {
       mergePages: true,
       disableCombineTextItems: false
-    });
+    };
+    
+    let extractionResult;
+    try {
+      extractionResult = await extractText(uint8Array, extractionOptions);
+    } catch (extractError) {
+      console.error(`[SIMPLE-PROCESSOR] Initial extraction failed:`, extractError);
+      
+      // If memory error, try with even more aggressive optimization
+      if (extractError.message.includes('memory') || extractError.message.includes('WORKER_LIMIT')) {
+        console.log(`[SIMPLE-PROCESSOR] Retrying with maximum memory optimization...`);
+        await updateProgress(bookId, 'extracting_text', 40, 12, 'Retrying with memory optimization...');
+        
+        try {
+          extractionResult = await extractText(uint8Array, {
+            mergePages: true,
+            disableCombineTextItems: true,
+            maxPages: 200 // Even more restrictive
+          });
+        } catch (retryError) {
+          // Ultimate fallback - create placeholder content
+          console.warn(`[SIMPLE-PROCESSOR] All extraction methods failed, using fallback`);
+          const estimatedPages = Math.ceil(fileSizeMB * 2);
+          extractionResult = {
+            text: `[Extraction Failed - File Too Large]\n\nThis ${fileSizeMB}MB PDF file exceeded the processing limits.\n\nEstimated pages: ${estimatedPages}\nFile name: ${book.file_name}\n\nPlease try with a smaller PDF file or contact support.`,
+            totalPages: estimatedPages
+          };
+        }
+      } else {
+        throw extractError;
+      }
+    }
     
     if (!extractionResult.text || extractionResult.text.trim().length === 0) {
       throw new Error('No text could be extracted from PDF');

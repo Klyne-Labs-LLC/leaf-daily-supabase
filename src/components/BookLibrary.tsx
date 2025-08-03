@@ -121,14 +121,9 @@ export const BookLibrary = ({ onSelectBook, onUploadNew }: BookLibraryProps) => 
 
   const retryProcessing = async (bookId: string) => {
     try {
-      const { error } = await supabase.functions.invoke('process-pdf-orchestrator', {
+      const { error } = await supabase.functions.invoke('process-pdf-simple', {
         body: { 
-          bookId,
-          config: {
-            enableCaching: true,
-            enableAsyncEnhancement: true,
-            priorityLevel: 5
-          }
+          bookId
         }
       });
 
