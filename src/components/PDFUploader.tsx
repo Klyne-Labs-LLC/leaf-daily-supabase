@@ -47,14 +47,16 @@ export const PDFUploader = ({ onUploadComplete }: PDFUploaderProps) => {
     }
 
     // Auto-detect title from filename if not provided
-    if (!bookDetails.title) {
+    let titleToUse = bookDetails.title;
+    if (!titleToUse.trim()) {
+      titleToUse = file.name.replace('.pdf', '').replace(/[-_]/g, ' ');
       setBookDetails(prev => ({
         ...prev,
-        title: file.name.replace('.pdf', '').replace(/[-_]/g, ' ')
+        title: titleToUse
       }));
     }
 
-    await handleUpload(file);
+    await handleUpload(file, titleToUse);
   }, [bookDetails, toast]);
 
   const { getRootProps, getInputProps, isDragActive } = useDropzone({
@@ -65,8 +67,9 @@ export const PDFUploader = ({ onUploadComplete }: PDFUploaderProps) => {
     multiple: false
   });
 
-  const handleUpload = async (file: File) => {
-    if (!bookDetails.title.trim()) {
+  const handleUpload = async (file: File, titleOverride?: string) => {
+    const titleToUse = titleOverride || bookDetails.title;
+    if (!titleToUse.trim()) {
       toast({
         title: "Missing information",
         description: "Please provide a book title",
@@ -90,7 +93,7 @@ export const PDFUploader = ({ onUploadComplete }: PDFUploaderProps) => {
         .from('books')
         .insert({
           user_id: user.id,
-          title: bookDetails.title.trim(),
+          title: titleToUse.trim(),
           author: bookDetails.author.trim() || null,
           genre: bookDetails.genre,
           file_name: file.name,

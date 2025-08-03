@@ -82,7 +82,8 @@ serve(async (req) => {
         JSON.stringify({
           success: true,
           cached: true,
-          ...cachedResult.metadata
+          text: cachedResult.text, // Include the actual text for direct calls
+          metadata: cachedResult.metadata
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
@@ -145,7 +146,8 @@ serve(async (req) => {
       JSON.stringify({
         success: true,
         cached: false,
-        ...result.metadata
+        text: result.text, // Include the actual text for direct calls
+        metadata: result.metadata
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );

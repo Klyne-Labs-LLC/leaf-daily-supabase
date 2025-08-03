@@ -134,6 +134,12 @@ async function runDirectPipeline(bookId: string, config: WorkflowConfig): Promis
 
   // Step 3: Call detect-chapters function directly
   console.log(`[DIRECT-PROCESSOR] Calling detect-chapters function...`);
+  console.log(`[DIRECT-PROCESSOR] Extract result:`, extractResult);
+  
+  if (!extractResult.text) {
+    throw new Error(`No text received from extract-pdf-text function. Got: ${JSON.stringify(extractResult)}`);
+  }
+  
   const detectResult = await callFunction('detect-chapters', { 
     bookId, 
     text: extractResult.text,
@@ -185,6 +191,8 @@ async function runDirectPipeline(bookId: string, config: WorkflowConfig): Promis
 
 async function callFunction(functionName: string, data: any): Promise<any> {
   try {
+    console.log(`[DIRECT-PROCESSOR] Calling ${functionName} with data:`, data);
+    
     const response = await fetch(`${supabaseUrl}/functions/v1/${functionName}`, {
       method: 'POST',
       headers: {
@@ -196,10 +204,12 @@ async function callFunction(functionName: string, data: any): Promise<any> {
 
     if (!response.ok) {
       const errorText = await response.text();
+      console.error(`[DIRECT-PROCESSOR] ${functionName} HTTP error:`, errorText);
       throw new Error(`HTTP ${response.status}: ${errorText}`);
     }
 
     const result = await response.json();
+    console.log(`[DIRECT-PROCESSOR] ${functionName} result:`, result);
     return result;
   } catch (error) {
     console.error(`[DIRECT-PROCESSOR] Error calling ${functionName}:`, error);

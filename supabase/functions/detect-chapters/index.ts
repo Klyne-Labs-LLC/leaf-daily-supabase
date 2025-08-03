@@ -84,7 +84,8 @@ serve(async (req) => {
         JSON.stringify({
           success: true,
           cached: true,
-          ...cachedResult.metadata
+          chapters: cachedResult.chapters, // Include the actual chapters for direct calls
+          metadata: cachedResult.metadata
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
@@ -145,7 +146,8 @@ serve(async (req) => {
       JSON.stringify({
         success: true,
         cached: false,
-        ...result.metadata
+        chapters: result.chapters, // Include the actual chapters for direct calls
+        metadata: result.metadata
       }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
